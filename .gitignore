@@ -1,0 +1,31 @@
+# Dépendances
+node_modules/
+functions/node_modules/
+
+# Builds
+dist/
+functions/lib/
+*.tsbuildinfo
+
+# Secrets & variables d'environnement — NE JAMAIS VERSIONNER
+.env
+.env.*
+!.env.example
+functions/.env
+functions/.env.*
+!functions/.env.example
+*service-account*.json
+*credentials*.json
+*.pem
+*.key
+
+# Émulateurs, journaux & tests
+.emulator-data/
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+test-results/
+playwright-report/
+backups/

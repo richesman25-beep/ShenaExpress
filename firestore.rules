@@ -1,0 +1,120 @@
+rules_version = '2';
+
+// =============================================================================
+// SHENA Express — Règles Firestore
+// Principe : tout est refusé par défaut. Les clients ne LISENT que leurs propres
+// données. Aucune écriture directe sur les données opérationnelles depuis un
+// navigateur : elles passent par les Cloud Functions, qui vérifient identité,
+// rôle, propriété et validité (le SDK Admin contourne ces règles).
+// Les rôles proviennent de custom claims attribués uniquement côté serveur.
+// =============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function claims() { return request.auth.token; }
+    function isAdmin() { return signedIn() && claims().role == 'admin'; }
+    function isStaff() { return signedIn() && claims().role == 'staff'; }
+    // Permission fine : admin = toutes ; employé = uniquement celles accordées.
+    function can(perm) {
+      return isAdmin() || (isStaff() && claims().perms is list && perm in claims().perms);
+    }
+    function isClient() { return signedIn() && claims().role == 'client'; }
+    // Le document appartient au client connecté.
+    function ownsDoc() { return isClient() && resource.data.clientUid == request.auth.uid; }
+    function financeEnabled() {
+      return get(/databases/$(database)/documents/settings/public).data.modules.finance == true;
+    }
+
+    // --- Profils utilisateurs (rôle) : lecture de soi-même, aucune écriture client.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || can('clients.read'));
+      allow write: if false;
+    }
+
+    // --- Fiches clients
+    match /clients/{clientId} {
+      allow read: if ownsDoc() || can('clients.read');
+      allow write: if false;
+    }
+    // Notes administratives privées : jamais lisibles par un client.
+    match /clientNotes/{clientId} {
+      allow read: if can('clients.read');
+      allow write: if false;
+    }
+
+    // --- Commandes
+    match /orders/{orderId} {
+      allow read: if ownsDoc() || can('orders.read');
+      allow write: if false;
+    }
+    match /orderPrivate/{orderId} {
+      allow read: if can('orders.read');
+      allow write: if false;
+    }
+
+    // --- Colis
+    match /shipments/{shipmentId} {
+      allow read: if ownsDoc() || can('shipments.read');
+      allow write: if false;
+    }
+    match /shipmentPrivate/{shipmentId} {
+      allow read: if can('shipments.read');
+      allow write: if false;
+    }
+
+    // --- Chronologie du suivi (aucune note interne n'y est stockée)
+    match /shipmentEvents/{eventId} {
+      allow read: if ownsDoc() || can('shipments.read') || can('orders.read');
+      allow write: if false;
+    }
+
+    // Notes internes liées aux événements : personnel uniquement.
+    match /shipmentEventsPrivate/{eventId} {
+      allow read: if can('shipments.read') || can('orders.read');
+      allow write: if false;
+    }
+
+    // --- Finances (module optionnel)
+    match /orderFinance/{orderId} {
+      allow read: if (ownsDoc() && financeEnabled()) || can('finance.read');
+      allow write: if false;
+    }
+    match /paymentRecords/{paymentId} {
+      allow read: if (ownsDoc() && financeEnabled()) || can('finance.read');
+      allow write: if false;
+    }
+
+    // --- Notifications : le destinataire peut seulement marquer comme lue.
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.recipientUid == request.auth.uid;
+      allow update: if signedIn()
+        && resource.data.recipientUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
+        && request.resource.data.readAt == request.time;
+      allow create, delete: if false;
+    }
+
+    // --- Paramètres
+    match /settings/public {
+      // Nom, logo, WhatsApp officiel : nécessaires à la page de connexion.
+      allow read: if true;
+      allow write: if false;
+    }
+    match /settings/{docId} {
+      allow read: if docId != 'public' && (isAdmin() || isStaff());
+      allow write: if false;
+    }
+
+    // --- Journal d'audit
+    match /auditLogs/{logId} {
+      allow read: if can('audit.read');
+      allow write: if false;
+    }
+
+    // Compteurs, limitation de débit, file d'e-mails : serveur uniquement.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

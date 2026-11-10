@@ -1,0 +1,51 @@
+{
+  "indexes": [
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientUid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+
+    { "collectionGroup": "shipments", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientUid", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "shipments", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientUid", "order": "ASCENDING" }, { "fieldPath": "orderIds", "arrayConfig": "CONTAINS" } ] },
+    { "collectionGroup": "shipments", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "shipments", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "shipments", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" } ] },
+
+    { "collectionGroup": "shipmentEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientUid", "order": "ASCENDING" }, { "fieldPath": "at", "order": "DESCENDING" } ] },
+    { "collectionGroup": "shipmentEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientUid", "order": "ASCENDING" }, { "fieldPath": "shipmentId", "order": "ASCENDING" }, { "fieldPath": "at", "order": "ASCENDING" } ] },
+    { "collectionGroup": "shipmentEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientUid", "order": "ASCENDING" }, { "fieldPath": "orderId", "order": "ASCENDING" }, { "fieldPath": "at", "order": "ASCENDING" } ] },
+    { "collectionGroup": "shipmentEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "shipmentId", "order": "ASCENDING" }, { "fieldPath": "at", "order": "ASCENDING" } ] },
+    { "collectionGroup": "shipmentEvents", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "orderId", "order": "ASCENDING" }, { "fieldPath": "at", "order": "ASCENDING" } ] },
+
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "recipientUid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+
+    { "collectionGroup": "paymentRecords", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "orderId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "paymentRecords", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clientUid", "order": "ASCENDING" }, { "fieldPath": "orderId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
+
+    { "collectionGroup": "orderFinance", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" } ] },
+
+    { "collectionGroup": "clients", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "clients", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}
