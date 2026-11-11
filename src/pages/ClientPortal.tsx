@@ -28,7 +28,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useI18n } from "@/i18n";
-import { getFirebaseDb, firebaseState } from "@/lib/firebase";
+import { getFirebaseDb } from "@/lib/firebase";
 import {
   STATUS_CODES,
   countShipmentsByBucket,
@@ -195,12 +195,6 @@ export function ClientLayout() {
         >
           {t.nav.skipToContent}
         </a>
-
-        {(firebaseState.mode === "emulator" || settings.isExample) && (
-          <div role="status" className="bg-amber-100 border-b border-amber-300 text-amber-950 px-4 py-1.5 text-xs font-medium text-center">
-            {t.common.demoBanner}
-          </div>
-        )}
 
         {/* Barre supérieure */}
         <header className="sticky top-0 z-30 border-b border-slate-200 bg-navy-900 text-white">

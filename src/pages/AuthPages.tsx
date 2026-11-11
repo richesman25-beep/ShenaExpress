@@ -8,20 +8,11 @@ import { firebaseState } from "@/lib/firebase";
 import { api, formatError } from "@/lib/api";
 import { ShenaLogo, WhatsappContactButton } from "@/components/ui";
 
-function DemoBanner() {
-  const { settings } = useSettings();
-  const { t } = useI18n();
+function ConfigErrorBanner() {
   if (firebaseState.mode === "unconfigured") {
     return (
       <div role="alert" className="bg-rose-900 text-white px-4 py-2.5 text-xs font-medium text-center">
         {firebaseState.configError}
-      </div>
-    );
-  }
-  if (firebaseState.mode === "emulator" || settings.isExample) {
-    return (
-      <div role="status" className="bg-amber-100 border-b border-amber-300 text-amber-950 px-4 py-2 text-xs font-medium text-center">
-        {t.common.demoBanner}
       </div>
     );
   }
@@ -46,7 +37,7 @@ function AuthShell({
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      <DemoBanner />
+      <ConfigErrorBanner />
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5">
           <Link to="/connexion" aria-label="Accueil SHENA Express">
@@ -181,9 +172,6 @@ export function ClientLoginPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
           <Link to="/mot-de-passe-oublie" className="font-semibold text-royal-600 hover:underline">
             {t.auth.forgotPassword}
-          </Link>
-          <Link to="/admin/connexion" className="font-medium text-slate-500 hover:text-navy-900">
-            Accès administrateur →
           </Link>
         </div>
       }

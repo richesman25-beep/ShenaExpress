@@ -13,9 +13,10 @@ import {
   signOut as fbSignOut,
   type User,
 } from "firebase/auth";
-import { getFirebaseAuth, firebaseState } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { getFirebaseAuth, getFirebaseDb, firebaseState } from "@/lib/firebase";
 import { api } from "@/lib/api";
-import { hasPermission, isBackOffice, type AuthClaims, type Permission, type Role } from "@shared/index";
+import { hasPermission, isBackOffice, type AuthClaims, type Permission, type Role, type UserDoc } from "@shared/index";
 
 export interface AuthContextValue {
   user: User | null;
@@ -39,11 +40,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const extractClaims = useCallback(async (u: User, forceRefresh = false): Promise<AuthClaims> => {
     const token = await u.getIdTokenResult(forceRefresh);
     const raw = token.claims as Record<string, unknown>;
-    return {
-      role: raw.role as Role | undefined,
-      perms: Array.isArray(raw.perms) ? (raw.perms as Permission[]) : undefined,
-      clientId: typeof raw.clientId === "string" ? raw.clientId : undefined,
-    };
+    if (raw.role) {
+      return {
+        role: raw.role as Role | undefined,
+        perms: Array.isArray(raw.perms) ? (raw.perms as Permission[]) : undefined,
+        clientId: typeof raw.clientId === "string" ? raw.clientId : undefined,
+      };
+    }
+    try {
+      const snap = await getDoc(doc(getFirebaseDb(), "users", u.uid));
+      if (snap.exists()) {
+        const data = snap.data() as UserDoc;
+        if (!data.disabled && data.role) {
+          return {
+            role: data.role,
+            perms: data.permissions,
+            clientId: data.clientId ?? undefined,
+          };
+        }
+      }
+    } catch {
+      // Ignore if Firestore rules or connectivity prevent reading users/{uid}
+    }
+    return {};
   }, []);
 
   useEffect(() => {
@@ -82,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const c = await extractClaims(cred.user, true);
         if (c.role !== "client") {
           await fbSignOut(auth);
-          throw new Error("Ce compte n'est pas un compte client. Utilisez l'espace d'administration.");
+          throw new Error("Identifiant ou mot de passe incorrect.");
         }
         return;
       }
