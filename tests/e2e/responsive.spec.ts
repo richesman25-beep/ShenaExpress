@@ -8,6 +8,10 @@ test.describe("15. Affichage responsive mobile Android & desktop + contrôle d'a
     await expect(page).toHaveURL(/\/connexion$/);
 
     await expect(page.getByRole("heading", { name: "Connexion client" })).toBeVisible();
+    // Vérifie que l'espace administrateur n'est jamais mentionné ni lié sur la page client
+    await expect(page.getByText(/Accès administrateur/i)).toHaveCount(0);
+    await expect(page.locator('a[href*="/admin"]')).toHaveCount(0);
+
     const idInput = page.getByLabel("Identifiant client", { exact: true });
     const pwdInput = page.getByLabel("Mot de passe", { exact: true });
     await expect(idInput).toBeVisible();
