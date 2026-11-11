@@ -1,4 +1,5 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
+import { getAnalytics, isSupported as isAnalyticsSupported } from "firebase/analytics";
 import { getAuth, connectAuthEmulator, type Auth } from "firebase/auth";
 import { getFirestore, connectFirestoreEmulator, type Firestore } from "firebase/firestore";
 import { getFunctions, connectFunctionsEmulator, type Functions } from "firebase/functions";
@@ -15,6 +16,7 @@ const DEMO_CONFIG = {
   authDomain: "demo-shena.firebaseapp.com",
   projectId: "demo-shena",
   appId: "1:000000000000:web:000000000000",
+  measurementId: undefined as string | undefined,
 };
 
 function readEnvConfig() {
@@ -109,6 +111,12 @@ function ensureInitialized() {
       connectFirestoreEmulator(dbInstance, host, 8080);
       connectFunctionsEmulator(functionsInstance, host, 5001);
       emulatorsConnected = true;
+    } else if (typeof window !== "undefined" && resolved.firebaseConfig.measurementId) {
+      isAnalyticsSupported()
+        .then((yes) => {
+          if (yes && appInstance) getAnalytics(appInstance);
+        })
+        .catch(() => undefined);
     }
   }
   return { app: appInstance!, auth: authInstance!, db: dbInstance!, functions: functionsInstance! };
