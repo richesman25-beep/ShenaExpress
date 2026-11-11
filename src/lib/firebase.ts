@@ -12,6 +12,7 @@ export interface FirebaseEnvValidation {
   config: {
     apiKey: string;
     authDomain: string;
+    databaseURL?: string;
     projectId: string;
     appId: string;
     storageBucket?: string;
@@ -56,6 +57,7 @@ function cleanEnvValue(raw: unknown): string {
 export function validateFirebaseEnv(env: Record<string, unknown>): FirebaseEnvValidation {
   const apiKey = cleanEnvValue(env.VITE_FIREBASE_API_KEY);
   const authDomain = cleanEnvValue(env.VITE_FIREBASE_AUTH_DOMAIN);
+  const databaseURL = cleanEnvValue(env.VITE_FIREBASE_DATABASE_URL) || undefined;
   const projectId = cleanEnvValue(env.VITE_FIREBASE_PROJECT_ID);
   const appId = cleanEnvValue(env.VITE_FIREBASE_APP_ID);
   const storageBucket = cleanEnvValue(env.VITE_FIREBASE_STORAGE_BUCKET) || undefined;
@@ -115,6 +117,7 @@ export function validateFirebaseEnv(env: Record<string, unknown>): FirebaseEnvVa
       config: {
         apiKey,
         authDomain,
+        databaseURL,
         projectId,
         appId,
         storageBucket,
