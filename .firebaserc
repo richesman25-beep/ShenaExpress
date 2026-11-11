@@ -1,6 +1,7 @@
 {
   "projects": {
-    "default": "demo-shena",
+    "default": "shenaexpress-13924",
+    "production": "shenaexpress-13924",
     "demo": "demo-shena"
   }
 }

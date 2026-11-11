@@ -25,6 +25,7 @@ function readEnvConfig() {
   const appId = (env.VITE_FIREBASE_APP_ID as string | undefined)?.trim();
   const storageBucket = (env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined)?.trim();
   const messagingSenderId = (env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined)?.trim();
+  const measurementId = (env.VITE_FIREBASE_MEASUREMENT_ID as string | undefined)?.trim();
   const region = ((env.VITE_FIREBASE_FUNCTIONS_REGION as string | undefined) || "us-east1").trim();
   const forceEmulators = (env.VITE_USE_EMULATORS as string | undefined)?.trim() === "true";
   const isProdBuild = Boolean(env.PROD) && !forceEmulators;
@@ -49,14 +50,30 @@ function readEnvConfig() {
     }
     return {
       state: { mode: "production" as const, projectId: projectId!, region },
-      firebaseConfig: { apiKey: apiKey!, authDomain: authDomain!, projectId: projectId!, appId: appId!, storageBucket, messagingSenderId },
+      firebaseConfig: {
+        apiKey: apiKey!,
+        authDomain: authDomain!,
+        projectId: projectId!,
+        appId: appId!,
+        storageBucket,
+        messagingSenderId,
+        measurementId,
+      },
     };
   }
 
   if (hasRealConfig && !forceEmulators) {
     return {
       state: { mode: "production" as const, projectId: projectId!, region },
-      firebaseConfig: { apiKey: apiKey!, authDomain: authDomain!, projectId: projectId!, appId: appId!, storageBucket, messagingSenderId },
+      firebaseConfig: {
+        apiKey: apiKey!,
+        authDomain: authDomain!,
+        projectId: projectId!,
+        appId: appId!,
+        storageBucket,
+        messagingSenderId,
+        measurementId,
+      },
     };
   }
 
