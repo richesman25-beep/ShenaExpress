@@ -302,10 +302,6 @@ export function AdminLoginPage() {
           <Link to="/mot-de-passe-oublie" className="font-semibold text-royal-600 hover:underline">
             {t.auth.forgotPassword}
           </Link>
-          <Link to="/connexion" className="inline-flex items-center gap-1 font-medium text-slate-500 hover:text-navy-900">
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Retour à l&apos;espace client</span>
-          </Link>
         </div>
       }
     >
