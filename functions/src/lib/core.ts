@@ -124,6 +124,9 @@ export async function loadSettings(tx?: Transaction): Promise<{ pub: PublicSetti
 }
 
 export function appUrl(): string {
+  if (isEmulator()) {
+    return (process.env.LOCAL_APP_URL || "http://localhost:5173").replace(/\/$/, "");
+  }
   return (process.env.APP_URL || "http://localhost:5173").replace(/\/$/, "");
 }
 

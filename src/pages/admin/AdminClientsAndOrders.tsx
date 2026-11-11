@@ -13,6 +13,8 @@ import {
   Trash2,
   PackageCheck,
   Copy,
+  RotateCcw,
+  AlertCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -21,6 +23,8 @@ import { api, formatError } from "@/lib/api";
 import {
   STATUS_CODES,
   CURRENCIES,
+  CLIENT_ACCESS_LABELS,
+  getClientAccessState,
   todayIso,
   formatIsoDate,
   parseMoney,
@@ -43,6 +47,21 @@ import {
 import { useAdminData } from "./AdminContext";
 
 /* =========================================================== 6.B. CLIENTS */
+function ClientAccessBadge({ client }: { client: Pick<ClientDoc, "status" | "passwordConfigured"> }) {
+  const state = getClientAccessState(client);
+  const styles =
+    state === "active"
+      ? "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-300"
+      : state === "pending_setup"
+        ? "bg-amber-50 text-amber-900 ring-1 ring-amber-300"
+        : "bg-rose-50 text-rose-900 ring-1 ring-rose-300";
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${styles}`}>
+      {CLIENT_ACCESS_LABELS[state]}
+    </span>
+  );
+}
+
 export function AdminClientsPage() {
   const { can } = useAuth();
   const { clients, orders } = useAdminData();
@@ -53,19 +72,35 @@ export function AdminClientsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<ClientDoc | null>(null);
-  const [inspecting, setInspecting] = useState<ClientDoc | null>(null);
+  const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [privateNotes, setPrivateNotes] = useState<string>("");
   const [savingNotes, setSavingNotes] = useState(false);
-  const [accessLink, setAccessLink] = useState<{ clientId: string; link: string } | null>(null);
+  const [accessLink, setAccessLink] = useState<{
+    clientId: string;
+    fullName?: string;
+    link: string;
+    isNewAccount?: boolean;
+  } | null>(null);
+  const [accessFeedback, setAccessFeedback] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+    link?: string;
+  } | null>(null);
+  const [accessBusy, setAccessBusy] = useState<string | null>(null);
   const [confirmToggle, setConfirmToggle] = useState<ClientDoc | null>(null);
   const [busy, setBusy] = useState(false);
 
   const canWrite = can("clients.write");
+  const inspecting = useMemo(
+    () => (inspectingId ? clients.find((c) => c.clientId === inspectingId) ?? null : null),
+    [clients, inspectingId],
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return clients.filter((c) => {
-      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      const accessState = getClientAccessState(c);
+      if (statusFilter !== "all" && accessState !== statusFilter) return false;
       if (!q) return true;
       return (
         c.clientId.toLowerCase().includes(q) ||
@@ -79,14 +114,15 @@ export function AdminClientsPage() {
   }, [clients, search, statusFilter]);
 
   useEffect(() => {
-    if (!inspecting) return;
+    if (!inspectingId) return;
     setPrivateNotes("");
-    getDoc(doc(getFirebaseDb(), "clientNotes", inspecting.clientId))
+    setAccessFeedback(null);
+    getDoc(doc(getFirebaseDb(), "clientNotes", inspectingId))
       .then((snap) => {
         if (snap.exists()) setPrivateNotes((snap.data().notes as string) ?? "");
       })
       .catch(() => undefined);
-  }, [inspecting]);
+  }, [inspectingId]);
 
   const handleToggleStatus = async () => {
     if (!confirmToggle) return;
@@ -106,22 +142,83 @@ export function AdminClientsPage() {
     }
   };
 
+  const handleCopyClientId = (clientId: string) => {
+    navigator.clipboard?.writeText(clientId);
+    setAccessFeedback({
+      type: "info",
+      message: `Identifiant client ${clientId} copié dans le presse-papiers.`,
+    });
+    notify("info", `Identifiant ${clientId} copié.`);
+  };
+
   const handleSendInvite = async (client: ClientDoc) => {
+    setAccessBusy("invite");
+    setAccessFeedback(null);
     try {
-      await api.sendClientInvite({ clientId: client.clientId });
-      notify("success", `Invitation de création de mot de passe envoyée à ${client.email}.`);
+      const res = await api.sendClientInvite({ clientId: client.clientId });
+      if (res.emulated && res.link) {
+        setAccessFeedback({
+          type: "info",
+          message:
+            "Mode développement local (sans serveur d'e-mail) : aucun e-mail n'a été envoyé. Transmettez le lien de configuration sécurisé ci-dessous au client.",
+          link: res.link,
+        });
+        notify("info", "Lien de configuration généré (mode local sans envoi d'e-mail).");
+      } else {
+        setAccessFeedback({
+          type: "success",
+          message: `Invitation de création de mot de passe envoyée à ${client.email}.`,
+        });
+        notify("success", `Invitation envoyée à ${client.email}.`);
+      }
     } catch (err) {
-      notify("error", formatError(err));
+      const msg = formatError(err);
+      setAccessFeedback({ type: "error", message: msg });
+      notify("error", msg);
+    } finally {
+      setAccessBusy(null);
     }
   };
 
   const handleGenerateAccessLink = async (client: ClientDoc) => {
+    setAccessBusy("link");
+    setAccessFeedback(null);
     try {
       const { link } = await api.generateClientAccessLink({ clientId: client.clientId });
-      setAccessLink({ clientId: client.clientId, link });
-      notify("success", `Lien d'accès sécurisé généré pour ${client.clientId}.`);
+      setAccessFeedback({
+        type: "success",
+        message:
+          "Lien de configuration à usage unique généré avec succès. Transmettez-le au client pour qu'il définisse son mot de passe.",
+        link,
+      });
+      notify("success", `Lien de configuration généré pour ${client.clientId}.`);
     } catch (err) {
-      notify("error", formatError(err));
+      const msg = formatError(err);
+      setAccessFeedback({ type: "error", message: msg });
+      notify("error", msg);
+    } finally {
+      setAccessBusy(null);
+    }
+  };
+
+  const handleResetPassword = async (client: ClientDoc) => {
+    setAccessBusy("reset");
+    setAccessFeedback(null);
+    try {
+      const { link } = await api.resetClientPassword({ clientId: client.clientId });
+      setAccessFeedback({
+        type: "success",
+        message:
+          "Mot de passe réinitialisé et sessions actives révoquées. Transmettez ce nouveau lien à usage unique au client.",
+        link,
+      });
+      notify("success", `Accès de ${client.clientId} réinitialisé.`);
+    } catch (err) {
+      const msg = formatError(err);
+      setAccessFeedback({ type: "error", message: msg });
+      notify("error", msg);
+    } finally {
+      setAccessBusy(null);
     }
   };
 
@@ -170,7 +267,7 @@ export function AdminClientsPage() {
           <input
             id="admin-client-search"
             type="search"
-            placeholder="Rechercher par identifiant (SHE-CLIENT-001), nom, téléphone, ville…"
+            placeholder="Rechercher par identifiant (SHE-CLIENT-001 ou SHENA-0001), nom, téléphone, ville…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-xl border border-slate-300 ps-10 pe-3 py-2 text-sm"
@@ -187,6 +284,7 @@ export function AdminClientsPage() {
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
           >
             <option value="all">Tous les comptes</option>
+            <option value="pending_setup">En attente de configuration</option>
             <option value="active">Comptes actifs</option>
             <option value="disabled">Comptes désactivés</option>
           </select>
@@ -196,7 +294,7 @@ export function AdminClientsPage() {
       {filtered.length === 0 ? (
         <EmptyState
           title="Aucun client trouvé"
-          description="Créez un client pour générer automatiquement son identifiant unique."
+          description="Créez un client pour générer son identifiant unique et son lien de configuration."
         />
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-xs overflow-hidden">
@@ -209,7 +307,7 @@ export function AdminClientsPage() {
                   <th className="py-3 px-4">Téléphone / WhatsApp</th>
                   <th className="py-3 px-4">Ville</th>
                   <th className="py-3 px-4">Commandes</th>
-                  <th className="py-3 px-4">Statut</th>
+                  <th className="py-3 px-4">Statut du compte</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -230,24 +328,16 @@ export function AdminClientsPage() {
                       <td className="py-3 px-4 text-xs text-slate-600">{c.city ?? "—"}</td>
                       <td className="py-3 px-4 text-xs font-bold">{clientOrdersCount}</td>
                       <td className="py-3 px-4">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                            c.status === "active"
-                              ? "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-300"
-                              : "bg-rose-50 text-rose-900 ring-1 ring-rose-300"
-                          }`}
-                        >
-                          {c.status === "active" ? "Actif" : "Désactivé"}
-                        </span>
+                        <ClientAccessBadge client={c} />
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex flex-wrap items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setInspecting(c)}
+                            onClick={() => setInspectingId(c.clientId)}
                             className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                           >
-                            Fiche &amp; historique
+                            Fiche &amp; accès
                           </button>
                           {canWrite && (
                             <>
@@ -292,11 +382,17 @@ export function AdminClientsPage() {
             setCreateOpen(false);
             setEditing(null);
           }}
-          onSaved={(createdClientId) => {
+          onSaved={(created) => {
             setCreateOpen(false);
             setEditing(null);
-            if (createdClientId) {
-              notify("success", `Client ${createdClientId} créé avec succès.`);
+            if (created) {
+              notify("success", `Client ${created.clientId} créé avec succès.`);
+              setAccessLink({
+                clientId: created.clientId,
+                fullName: created.fullName,
+                link: created.setupLink,
+                isNewAccount: true,
+              });
             } else {
               notify("success", "Informations client mises à jour.");
             }
@@ -304,11 +400,11 @@ export function AdminClientsPage() {
         />
       )}
 
-      {/* Modal fiche client : coordonnées, accès, notes privées, historique de commandes */}
+      {/* Modal fiche client : coordonnées, section « Accès au compte », notes privées, historique de commandes */}
       {inspecting && (
         <Modal
           title={`${inspecting.clientId} — ${inspecting.fullName}`}
-          onClose={() => setInspecting(null)}
+          onClose={() => setInspectingId(null)}
           maxWidth="max-w-2xl"
         >
           <div className="space-y-5">
@@ -333,33 +429,125 @@ export function AdminClientsPage() {
               </div>
             </div>
 
-            {canWrite && (
-              <div className="rounded-xl border border-slate-200 p-4 space-y-2.5">
-                <div className="text-xs font-bold text-navy-900 uppercase">
-                  Invitation &amp; réinitialisation d&apos;accès (sans connaître le mot de passe)
+            {/* Section obligatoire : Accès au compte */}
+            <section aria-label="Accès au compte" className="rounded-xl border border-slate-200 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-xs font-extrabold text-navy-900 uppercase tracking-wide">
+                  Accès au compte
+                </h3>
+                <ClientAccessBadge client={inspecting} />
+              </div>
+
+              <div className="grid gap-2.5 sm:grid-cols-2 rounded-xl bg-slate-50 p-3 text-xs">
+                <div>
+                  <span className="text-slate-500 block">Identifiant client :</span>
+                  <strong className="text-sm font-extrabold text-navy-900">{inspecting.clientId}</strong>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {inspecting.hasRealEmail && inspecting.email && (
-                    <button
-                      type="button"
-                      onClick={() => handleSendInvite(inspecting)}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-royal-600 px-3 py-2 text-xs font-bold text-white hover:bg-royal-700"
-                    >
-                      <Mail className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Envoyer l&apos;e-mail d&apos;invitation / réinitialisation</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleGenerateAccessLink(inspecting)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-navy-900 hover:bg-slate-50"
-                  >
-                    <KeyRound className="h-3.5 w-3.5 text-royal-600" aria-hidden="true" />
-                    <span>Générer un lien d&apos;accès sécurisé à usage unique</span>
-                  </button>
+                <div>
+                  <span className="text-slate-500 block">Adresse e-mail associée :</span>
+                  <strong className="text-slate-900">
+                    {inspecting.hasRealEmail && inspecting.email
+                      ? inspecting.email
+                      : "Non renseignée (connexion par identifiant client)"}
+                  </strong>
                 </div>
               </div>
-            )}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopyClientId(inspecting.clientId)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-navy-900 hover:bg-slate-50"
+                >
+                  <Copy className="h-3.5 w-3.5 text-royal-600" aria-hidden="true" />
+                  <span>Copier l&apos;identifiant client</span>
+                </button>
+
+                {canWrite && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={accessBusy !== null || inspecting.status !== "active"}
+                      onClick={() => handleGenerateAccessLink(inspecting)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-royal-600 px-3 py-2 text-xs font-bold text-white hover:bg-royal-700 disabled:opacity-60"
+                    >
+                      <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>
+                        {accessBusy === "link"
+                          ? "Génération…"
+                          : "Générer un lien de configuration"}
+                      </span>
+                    </button>
+
+                    {inspecting.hasRealEmail && inspecting.email && (
+                      <button
+                        type="button"
+                        disabled={accessBusy !== null || inspecting.status !== "active"}
+                        onClick={() => handleSendInvite(inspecting)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-navy-900 hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        <Mail className="h-3.5 w-3.5 text-royal-600" aria-hidden="true" />
+                        <span>{accessBusy === "invite" ? "Envoi…" : "Envoyer une invitation"}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      disabled={accessBusy !== null || inspecting.status !== "active"}
+                      onClick={() => handleResetPassword(inspecting)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-navy-900 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+                      <span>
+                        {accessBusy === "reset" ? "Réinitialisation…" : "Réinitialiser le mot de passe"}
+                      </span>
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {accessFeedback && (
+                <div
+                  role={accessFeedback.type === "error" ? "alert" : "status"}
+                  className={`rounded-xl border p-3 text-xs space-y-2 ${
+                    accessFeedback.type === "error"
+                      ? "border-rose-200 bg-rose-50 text-rose-900"
+                      : accessFeedback.type === "success"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                        : "border-blue-200 bg-blue-50 text-slate-900"
+                  }`}
+                >
+                  <div className="flex items-start gap-2 font-semibold">
+                    {accessFeedback.type === "error" ? (
+                      <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" aria-hidden="true" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" aria-hidden="true" />
+                    )}
+                    <span>{accessFeedback.message}</span>
+                  </div>
+                  {accessFeedback.link && (
+                    <div className="space-y-2 pt-1">
+                      <div className="rounded-lg bg-white/90 border border-slate-200 p-2.5 font-mono text-[11px] break-all text-slate-800">
+                        {accessFeedback.link}
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(accessFeedback.link!);
+                            notify("info", "Lien de configuration copié dans le presse-papiers.");
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-royal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-royal-700"
+                        >
+                          <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>Copier le lien de configuration</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
 
             {/* Notes administratives privées */}
             <form onSubmit={handleSaveNotes} className="space-y-2">
@@ -412,30 +600,78 @@ export function AdminClientsPage() {
         </Modal>
       )}
 
-      {/* Modal lien d'accès à usage unique */}
+      {/* Modal récapitulatif d'accès après création ou génération de lien */}
       {accessLink && (
         <Modal
-          title={`Lien d'accès sécurisé — ${accessLink.clientId}`}
+          title={
+            accessLink.isNewAccount
+              ? `Compte client créé — ${accessLink.clientId}`
+              : `Lien de configuration — ${accessLink.clientId}`
+          }
           onClose={() => setAccessLink(null)}
         >
-          <div className="space-y-3">
-            <p className="text-xs text-slate-600">
-              Transmettez ce lien à usage unique directement au client (par exemple sur son WhatsApp vérifié). Il lui permettra de définir lui-même son mot de passe sans que personne d&apos;autre ne le connaisse.
-            </p>
-            <div className="rounded-xl bg-slate-100 p-3 text-xs break-all font-mono text-slate-800">
-              {accessLink.link}
+          <div className="space-y-4">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+              <div className="font-bold">Statut : En attente de configuration</div>
+              <p className="mt-1">
+                Transmettez l&apos;identifiant et le lien sécurisé à usage unique ci-dessous au client (par WhatsApp, SMS ou e-mail). Le client choisira lui-même son mot de passe et son compte passera automatiquement au statut <strong>Actif</strong>.
+              </p>
             </div>
-            <div className="flex justify-end gap-2">
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-bold uppercase text-slate-500">Identifiant client</div>
+                <div className="text-base font-extrabold text-navy-900">
+                  {accessLink.clientId}
+                  {accessLink.fullName ? ` — ${accessLink.fullName}` : ""}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(accessLink.clientId);
+                  notify("info", `Identifiant ${accessLink.clientId} copié.`);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-navy-900 hover:bg-slate-100"
+              >
+                <Copy className="h-3.5 w-3.5 text-royal-600" aria-hidden="true" />
+                <span>Copier l&apos;identifiant client</span>
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="text-xs font-bold text-slate-700">
+                Lien sécurisé de définition du mot de passe (valable 24h, usage unique) :
+              </div>
+              <div className="rounded-xl bg-slate-100 p-3 text-xs break-all font-mono text-slate-800">
+                {accessLink.link}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(
+                    `Bonjour${accessLink.fullName ? ` ${accessLink.fullName}` : ""}, voici vos accès SHENA Express :\n- Identifiant client : ${accessLink.clientId}\n- Lien pour définir votre mot de passe : ${accessLink.link}`,
+                  );
+                  notify("info", "Message complet (identifiant + lien) copié.");
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-navy-900 hover:bg-slate-50"
+              >
+                <Copy className="h-3.5 w-3.5 text-slate-600" aria-hidden="true" />
+                <span>Copier message complet</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {
                   navigator.clipboard?.writeText(accessLink.link);
-                  notify("info", "Lien copié dans le presse-papiers.");
+                  notify("info", "Lien de configuration copié dans le presse-papiers.");
                 }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-royal-600 px-4 py-2 text-xs font-bold text-white"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-royal-600 px-4 py-2 text-xs font-bold text-white hover:bg-royal-700"
               >
                 <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Copier le lien</span>
+                <span>Copier le lien de configuration</span>
               </button>
             </div>
           </div>
@@ -471,8 +707,9 @@ function ClientFormModal({
 }: {
   initial: ClientDoc | null;
   onClose: () => void;
-  onSaved: (clientId?: string) => void;
+  onSaved: (created?: { clientId: string; fullName: string; setupLink: string }) => void;
 }) {
+  const [customClientId, setCustomClientId] = useState("");
   const [fullName, setFullName] = useState(initial?.fullName ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [whatsapp, setWhatsapp] = useState(initial?.whatsapp ?? "");
@@ -480,7 +717,6 @@ function ClientFormModal({
   const [address, setAddress] = useState(initial?.address ?? "");
   const [city, setCity] = useState(initial?.city ?? "");
   const [notes, setNotes] = useState("");
-  const [sendInvite, setSendInvite] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -502,6 +738,7 @@ function ClientFormModal({
         onSaved();
       } else {
         const res = await api.createClient({
+          clientId: customClientId.trim() ? customClientId.trim().toUpperCase() : null,
           fullName,
           phone,
           whatsapp: whatsapp || null,
@@ -509,9 +746,9 @@ function ClientFormModal({
           address: address || null,
           city: city || null,
           notes: notes || null,
-          sendInvite,
+          sendInvite: false,
         });
-        onSaved(res.clientId);
+        onSaved({ clientId: res.clientId, fullName, setupLink: res.setupLink });
       }
     } catch (err) {
       setError(formatError(err));
@@ -540,6 +777,20 @@ function ClientFormModal({
             className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
           />
         </div>
+        {!initial && (
+          <div>
+            <label htmlFor="cf-client-id" className="block text-xs font-bold text-slate-700 mb-1">
+              Identifiant client unique (optionnel — généré automatiquement si vide)
+            </label>
+            <input
+              id="cf-client-id"
+              placeholder="Ex. SHE-CLIENT-001 ou SHENA-0001"
+              value={customClientId}
+              onChange={(e) => setCustomClientId(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase"
+            />
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="cf-phone" className="block text-xs font-bold text-slate-700 mb-1">
@@ -569,7 +820,7 @@ function ClientFormModal({
         </div>
         <div>
           <label htmlFor="cf-email" className="block text-xs font-bold text-slate-700 mb-1">
-            E-mail (recommandé pour l&apos;invitation et la récupération de mot de passe)
+            E-mail (optionnel — utile pour la récupération autonome du mot de passe)
           </label>
           <input
             id="cf-email"
@@ -605,29 +856,18 @@ function ClientFormModal({
         </div>
 
         {!initial && (
-          <>
-            <div>
-              <label htmlFor="cf-notes" className="block text-xs font-bold text-slate-700 mb-1">
-                Notes administratives privées
-              </label>
-              <textarea
-                id="cf-notes"
-                rows={2}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-            <label className="flex items-center gap-2 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                checked={sendInvite}
-                onChange={(e) => setSendInvite(e.target.checked)}
-                className="rounded border-slate-300"
-              />
-              <span>Envoyer immédiatement une invitation par e-mail (si une adresse e-mail est renseignée)</span>
+          <div>
+            <label htmlFor="cf-notes" className="block text-xs font-bold text-slate-700 mb-1">
+              Notes administratives privées
             </label>
-          </>
+            <textarea
+              id="cf-notes"
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
         )}
 
         <div className="flex justify-end gap-2 pt-2">
@@ -643,7 +883,7 @@ function ClientFormModal({
             disabled={busy}
             className="rounded-xl bg-royal-600 px-4 py-2 text-xs font-bold text-white hover:bg-royal-700 disabled:opacity-60"
           >
-            {busy ? "Enregistrement…" : initial ? "Enregistrer" : "Créer le client"}
+            {busy ? "Enregistrement…" : initial ? "Enregistrer" : "Créer le client et générer son lien d'accès"}
           </button>
         </div>
       </form>

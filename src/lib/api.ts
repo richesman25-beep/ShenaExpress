@@ -54,9 +54,16 @@ function call<Req, Res>(name: string) {
 export const api = {
   clientSignIn: call<{ identifier: string; password: string }, { token: string }>("clientSignIn"),
   requestPasswordReset: call<{ identifier: string }, { ok: boolean }>("requestPasswordReset"),
+  verifyPasswordSetupToken: call<{ oobCode: string }, { valid: boolean; clientId: string; fullName: string }>(
+    "verifyPasswordSetupToken",
+  ),
+  completePasswordSetup: call<{ oobCode: string; newPassword: string }, { ok: boolean; clientId: string }>(
+    "completePasswordSetup",
+  ),
 
   createClient: call<
     {
+      clientId?: string | null;
       fullName: string;
       phone: string;
       whatsapp?: string | null;
@@ -66,7 +73,7 @@ export const api = {
       notes?: string | null;
       sendInvite?: boolean;
     },
-    { clientId: string; inviteSent: boolean }
+    { clientId: string; setupLink: string; inviteSent: boolean }
   >("createClient"),
 
   updateClient: call<
@@ -83,8 +90,9 @@ export const api = {
   >("updateClient"),
 
   setClientStatus: call<{ clientId: string; active: boolean }, { ok: boolean }>("setClientStatus"),
-  sendClientInvite: call<{ clientId: string }, { sent: boolean }>("sendClientInvite"),
+  sendClientInvite: call<{ clientId: string }, { sent: boolean; emulated?: boolean; link?: string }>("sendClientInvite"),
   generateClientAccessLink: call<{ clientId: string }, { link: string }>("generateClientAccessLink"),
+  resetClientPassword: call<{ clientId: string }, { link: string }>("resetClientPassword"),
   saveClientNotes: call<{ clientId: string; notes: string }, { ok: boolean }>("saveClientNotes"),
 
   createOrder: call<

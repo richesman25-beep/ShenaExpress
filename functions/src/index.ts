@@ -4,13 +4,14 @@ if (getApps().length === 0) {
   initializeApp();
 }
 
-export { clientSignIn, requestPasswordReset } from "./auth.js";
+export { clientSignIn, requestPasswordReset, verifyPasswordSetupToken, completePasswordSetup } from "./auth.js";
 export {
   createClient,
   updateClient,
   setClientStatus,
   sendClientInvite,
   generateClientAccessLink,
+  resetClientPassword,
   saveClientNotes,
 } from "./clients.js";
 export { createOrder, updateOrder, recordReceipt } from "./orders.js";

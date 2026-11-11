@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getAuth } from "firebase-admin/auth";
 import { HttpsError } from "firebase-functions/v2/https";
 import { db, FieldValue, Timestamp, appUrl } from "./core.js";
 
@@ -51,10 +52,97 @@ export async function sendPasswordResetEmail(email: string): Promise<boolean> {
   const { ok, data } = await identityCall("accounts:sendOobCode", {
     requestType: "PASSWORD_RESET",
     email,
-    continueUrl: `${appUrl()}/connexion`,
+    continueUrl: `${appUrl()}/definir-mot-de-passe`,
   });
   if (!ok) console.error("sendPasswordResetEmail: échec", (data.error as { message?: string } | undefined)?.message);
   return ok;
+}
+
+export type OobVerifyResult = { ok: true; email: string } | { ok: false; reason: "invalid" | "error" };
+export type OobConsumeResult = { ok: true; email: string } | { ok: false; reason: "invalid" | "weak" | "error" };
+
+/** Vérifie un code OOB Firebase Auth sans le consommer et sans jamais exposer d'e-mail technique au navigateur. */
+export async function verifyOobPasswordCode(oobCode: string): Promise<OobVerifyResult> {
+  const { ok, data } = await identityCall("accounts:resetPassword", { oobCode });
+  if (ok && typeof data.email === "string") {
+    return { ok: true, email: data.email.toLowerCase() };
+  }
+  const message = String((data.error as { message?: string } | undefined)?.message ?? "");
+  if (/INVALID_OOB_CODE|EXPIRED_OOB_CODE|USER_DISABLED|EMAIL_NOT_FOUND/.test(message)) {
+    return { ok: false, reason: "invalid" };
+  }
+  return { ok: false, reason: "error" };
+}
+
+/** Consomme le code OOB à usage unique dans Firebase Auth et définit le nouveau mot de passe. */
+export async function consumeOobPasswordCode(oobCode: string, newPassword: string): Promise<OobConsumeResult> {
+  const { ok, data } = await identityCall("accounts:resetPassword", { oobCode, newPassword });
+  if (ok && typeof data.email === "string") {
+    return { ok: true, email: data.email.toLowerCase() };
+  }
+  const message = String((data.error as { message?: string } | undefined)?.message ?? "");
+  if (message.includes("WEAK_PASSWORD")) {
+    return { ok: false, reason: "weak" };
+  }
+  if (/INVALID_OOB_CODE|EXPIRED_OOB_CODE|USER_DISABLED|EMAIL_NOT_FOUND/.test(message)) {
+    return { ok: false, reason: "invalid" };
+  }
+  return { ok: false, reason: "error" };
+}
+
+const SETUP_LINK_TTL_MS = 24 * 3600 * 1000; // 24 heures
+
+export function hashOobCode(oobCode: string): string {
+  return hash(`oob:${oobCode}`);
+}
+
+/**
+ * Génère un lien sécurisé à usage unique permettant au client de définir son mot de passe
+ * directement sur l'interface SHENA Express (/definir-mot-de-passe), en révoquant tout lien précédent.
+ */
+export async function createClientPasswordSetupLink(email: string, clientId: string, clientUid: string): Promise<string> {
+  const rawLink = await getAuth().generatePasswordResetLink(email, { url: `${appUrl()}/definir-mot-de-passe` });
+  const parsed = new URL(rawLink);
+  const oobCode = parsed.searchParams.get("oobCode");
+  if (!oobCode) {
+    throw new HttpsError("internal", "Impossible de générer le code de configuration du mot de passe.");
+  }
+
+  const prevSnap = await db()
+    .collection("passwordSetupTokens")
+    .where("clientId", "==", clientId)
+    .where("revoked", "==", false)
+    .get();
+
+  const batch = db().batch();
+  const now = Date.now();
+  for (const d of prevSnap.docs) {
+    batch.update(d.ref, { revoked: true, updatedAt: FieldValue.serverTimestamp() });
+  }
+  batch.set(db().collection("passwordSetupTokens").doc(hashOobCode(oobCode)), {
+    clientId,
+    clientUid,
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(now + SETUP_LINK_TTL_MS),
+    usedAt: null,
+    revoked: false,
+  });
+  await batch.commit();
+
+  return `${appUrl()}/definir-mot-de-passe?oobCode=${encodeURIComponent(oobCode)}&clientId=${encodeURIComponent(clientId)}`;
+}
+
+/** Vérifie qu'un jeton de configuration n'a été ni révoqué, ni déjà utilisé, ni expiré. */
+export async function assertSetupTokenUsable(oobCode: string): Promise<void> {
+  const snap = await db().collection("passwordSetupTokens").doc(hashOobCode(oobCode)).get();
+  if (!snap.exists) return;
+  const data = snap.data() as { revoked?: boolean; usedAt?: Timestamp | null; expiresAt?: Timestamp };
+  if (data.revoked || data.usedAt) {
+    throw new HttpsError("failed-precondition", "Ce lien de configuration a déjà été utilisé ou remplacé par un lien plus récent.");
+  }
+  if (data.expiresAt && data.expiresAt.toMillis() < Date.now()) {
+    throw new HttpsError("failed-precondition", "Ce lien de configuration a expiré. Demandez un nouveau lien à SHENA Express.");
+  }
 }
 
 /* ------------------------------------------------------------ throttling */

@@ -4,7 +4,7 @@ import { I18nProvider } from "@/i18n";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import { ToastProvider } from "@/components/ui";
-import { ClientLoginPage, AdminLoginPage, PasswordResetPage } from "@/pages/AuthPages";
+import { ClientLoginPage, AdminLoginPage, PasswordResetPage, PasswordSetupPage } from "@/pages/AuthPages";
 import {
   ClientLayout,
   ClientDashboardPage,
@@ -60,6 +60,7 @@ export function AppRoutes() {
       <Route path="/connexion" element={<ClientLoginPage />} />
       <Route path="/admin/connexion" element={<AdminLoginPage />} />
       <Route path="/mot-de-passe-oublie" element={<PasswordResetPage />} />
+      <Route path="/definir-mot-de-passe" element={<PasswordSetupPage />} />
 
       {/* Espace client */}
       <Route

@@ -197,8 +197,8 @@ describe("Parcours de bout en bout via Cloud Functions & Firebase Auth Emulator"
 
     // Création d'un client par l'administrateur
     const createClient = httpsCallable<
-      { fullName: string; phone: string; email: string; city: string; notes: string; sendInvite: boolean },
-      { clientId: string; inviteSent: boolean }
+      { clientId?: string | null; fullName: string; phone: string; email?: string | null; city: string; notes: string; sendInvite: boolean },
+      { clientId: string; setupLink: string; inviteSent: boolean }
     >(fns, "createClient");
     const createdClient = await createClient({
       fullName: "Marie Jean-Baptiste",
@@ -206,15 +206,102 @@ describe("Parcours de bout en bout via Cloud Functions & Firebase Auth Emulator"
       email: "marie@client.test",
       city: "Port-au-Prince",
       notes: "Client VIP",
-      sendInvite: true,
+      sendInvite: false,
     });
     const clientId = createdClient.data.clientId;
     expect(clientId).toMatch(/^SHE-CLIENT-\d{3,}$/);
+    expect(createdClient.data.setupLink).toContain("/definir-mot-de-passe?oobCode=");
 
-    // Définition d'un mot de passe sur le compte client pour tester clientSignIn
-    const clientSnap = await adminDb.doc(`clients/${clientId}`).get();
+    // À la création, le compte est en attente de configuration (passwordConfigured === false)
+    let clientSnap = await adminDb.doc(`clients/${clientId}`).get();
     const clientUid = clientSnap.data()!.clientUid as string;
-    await adminAuth.updateUser(clientUid, { password: "ClientPassword#2026", emailVerified: true });
+    expect(clientSnap.data()!.passwordConfigured).toBe(false);
+
+    // Extraction du code oobCode depuis le lien de configuration généré
+    const firstOobCode = new URL(createdClient.data.setupLink).searchParams.get("oobCode")!;
+    expect(firstOobCode).toBeTruthy();
+
+    // Vérification du lien via verifyPasswordSetupToken (sans exposer d'e-mail technique)
+    const verifyPasswordSetupToken = httpsCallable<
+      { oobCode: string },
+      { valid: boolean; clientId: string; fullName: string }
+    >(fns, "verifyPasswordSetupToken");
+    const verified = await verifyPasswordSetupToken({ oobCode: firstOobCode });
+    expect(verified.data).toEqual({
+      valid: true,
+      clientId,
+      fullName: "Marie Jean-Baptiste",
+    });
+
+    // Définition du mot de passe par le client via completePasswordSetup
+    const completePasswordSetup = httpsCallable<
+      { oobCode: string; newPassword: string },
+      { ok: boolean; clientId: string }
+    >(fns, "completePasswordSetup");
+    const setupDone = await completePasswordSetup({
+      oobCode: firstOobCode,
+      newPassword: "ClientPassword#2026",
+    });
+    expect(setupDone.data).toEqual({ ok: true, clientId });
+
+    // Le compte passe automatiquement en statut actif (passwordConfigured === true)
+    clientSnap = await adminDb.doc(`clients/${clientId}`).get();
+    expect(clientSnap.data()!.passwordConfigured).toBe(true);
+
+    // 12. Le lien d'invitation est à usage unique : toute tentative de le réutiliser échoue
+    await expect(
+      completePasswordSetup({
+        oobCode: firstOobCode,
+        newPassword: "AnotherPassword#2026",
+      }),
+    ).rejects.toThrow();
+
+    // 1 & 2. Création d'un second client avec identifiant personnalisé SHENA-0001 (sans adresse e-mail)
+    const secondClient = await createClient({
+      clientId: "SHENA-0001",
+      fullName: "Jean-Luc Pierre",
+      phone: "+509 48 99 00 11",
+      email: null,
+      city: "Cap-Haïtien",
+      notes: "Client sans e-mail",
+      sendInvite: false,
+    });
+    expect(secondClient.data.clientId).toBe("SHENA-0001");
+    expect(secondClient.data.setupLink).toContain("oobCode=");
+
+    // L'identifiant est strictement unique : impossible de recréer SHENA-0001
+    await expect(
+      createClient({
+        clientId: "SHENA-0001",
+        fullName: "Doublon ID",
+        phone: "+509 48 99 00 22",
+        email: null,
+        city: "Jacmel",
+        notes: "",
+        sendInvite: false,
+      }),
+    ).rejects.toThrow(/déjà attribué/);
+
+    // 6 & 12. Réinitialisation administrative : un nouveau lien révoque immédiatement l'ancien lien non utilisé
+    const resetClientPassword = httpsCallable<{ clientId: string }, { link: string }>(fns, "resetClientPassword");
+    const oldLinkOob = new URL(secondClient.data.setupLink).searchParams.get("oobCode")!;
+    const resetResLink = await resetClientPassword({ clientId: "SHENA-0001" });
+    const newLinkOob = new URL(resetResLink.data.link).searchParams.get("oobCode")!;
+    expect(newLinkOob).not.toBe(oldLinkOob);
+
+    // L'ancien lien remplacé est refusé
+    await expect(
+      completePasswordSetup({
+        oobCode: oldLinkOob,
+        newPassword: "SecondPassword#2026",
+      }),
+    ).rejects.toThrow();
+
+    // Le nouveau lien de réinitialisation fonctionne et active SHENA-0001
+    await completePasswordSetup({
+      oobCode: newLinkOob,
+      newPassword: "SecondPassword#2026",
+    });
 
     // 6. Création d'une commande avec 2 lignes d'articles
     const createOrder = httpsCallable<unknown, { orderId: string }>(fns, "createOrder");
@@ -387,19 +474,38 @@ describe("Parcours de bout en bout via Cloud Functions & Firebase Auth Emulator"
     const resetRes = await requestPasswordReset({ identifier: clientId });
     expect(resetRes.data.ok).toBe(true);
 
-    // 5 & 13. Connecté en tant que client, toute tentative d'appeler une fonction admin est refusée côté serveur
-    await expect(
-      updateStatus({
-        targetType: "shipment",
-        targetId: sh1.data.shipmentId,
-        status: "delivered",
-      }),
-    ).rejects.toThrow();
-    await expect(
-      setOrderCharges({
-        orderId,
-        charges: [],
-      }),
-    ).rejects.toThrow();
+    // 5, 9 & 13. Connecté en tant que client, toute tentative d'appeler une fonction admin (statut, finances, invitations, création d'admin) est refusée côté serveur
+    const generateClientAccessLink = httpsCallable(fns, "generateClientAccessLink");
+    const sendClientInvite = httpsCallable(fns, "sendClientInvite");
+    const setStaffRole = httpsCallable(fns, "setStaffRole");
+    await Promise.all([
+      expect(generateClientAccessLink({ clientId })).rejects.toThrow(),
+      expect(sendClientInvite({ clientId })).rejects.toThrow(),
+      expect(resetClientPassword({ clientId })).rejects.toThrow(),
+      expect(
+        setStaffRole({
+          email: "pirate@client.test",
+          role: "admin",
+          permissions: [],
+        }),
+      ).rejects.toThrow(),
+      expect(
+        updateStatus({
+          targetType: "shipment",
+          targetId: sh1.data.shipmentId,
+          status: "delivered",
+        }),
+      ).rejects.toThrow(),
+      expect(
+        setOrderCharges({
+          orderId,
+          charges: [],
+        }),
+      ).rejects.toThrow(),
+    ]);
+
+    // 4. Connexion du second client (sans e-mail) avec son identifiant personnalisé SHENA-0001
+    const signedSecond = await clientSignIn({ identifier: "SHENA-0001", password: "SecondPassword#2026" });
+    expect(typeof signedSecond.data.token).toBe("string");
   });
 });

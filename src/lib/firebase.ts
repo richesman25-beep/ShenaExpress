@@ -4,11 +4,30 @@ import { getAuth, connectAuthEmulator, type Auth } from "firebase/auth";
 import { getFirestore, connectFirestoreEmulator, type Firestore } from "firebase/firestore";
 import { getFunctions, connectFunctionsEmulator, type Functions } from "firebase/functions";
 
+export interface FirebaseEnvValidation {
+  valid: boolean;
+  missingVars: string[];
+  malformedVars: { name: string; reason: string }[];
+  errorMessage?: string;
+  config: {
+    apiKey: string;
+    authDomain: string;
+    projectId: string;
+    appId: string;
+    storageBucket?: string;
+    messagingSenderId?: string;
+    measurementId?: string;
+    region: string;
+  } | null;
+}
+
 export interface RuntimeFirebaseState {
   mode: "production" | "emulator" | "unconfigured";
   projectId: string;
   region: string;
   configError?: string;
+  missingVars?: string[];
+  malformedVars?: { name: string; reason: string }[];
 }
 
 const DEMO_CONFIG = {
@@ -19,63 +38,144 @@ const DEMO_CONFIG = {
   measurementId: undefined as string | undefined,
 };
 
+/** Nettoie les guillemets ou virgules de fin souvent copiés par erreur depuis un extrait JS dans Netlify. */
+function cleanEnvValue(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw
+    .trim()
+    .replace(/,+$/, "")
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+}
+
+/**
+ * Valide les variables VITE_FIREBASE_* en distinguant clairement les variables absentes
+ * des valeurs mal formées, sans jamais exposer le contenu des clés dans le message d'erreur.
+ */
+export function validateFirebaseEnv(env: Record<string, unknown>): FirebaseEnvValidation {
+  const apiKey = cleanEnvValue(env.VITE_FIREBASE_API_KEY);
+  const authDomain = cleanEnvValue(env.VITE_FIREBASE_AUTH_DOMAIN);
+  const projectId = cleanEnvValue(env.VITE_FIREBASE_PROJECT_ID);
+  const appId = cleanEnvValue(env.VITE_FIREBASE_APP_ID);
+  const storageBucket = cleanEnvValue(env.VITE_FIREBASE_STORAGE_BUCKET) || undefined;
+  const messagingSenderId = cleanEnvValue(env.VITE_FIREBASE_MESSAGING_SENDER_ID) || undefined;
+  const measurementId = cleanEnvValue(env.VITE_FIREBASE_MEASUREMENT_ID) || undefined;
+  const region = cleanEnvValue(env.VITE_FIREBASE_FUNCTIONS_REGION) || "us-east1";
+
+  const missingVars: string[] = [];
+  const malformedVars: { name: string; reason: string }[] = [];
+
+  if (!apiKey) {
+    missingVars.push("VITE_FIREBASE_API_KEY");
+  } else if (apiKey === "demo-api-key" || !/^AIza[0-9A-Za-z_-]{25,}$/.test(apiKey)) {
+    malformedVars.push({
+      name: "VITE_FIREBASE_API_KEY",
+      reason: "doit être une clé Web Firebase valide commençant par « AIza »",
+    });
+  }
+
+  if (!authDomain) {
+    missingVars.push("VITE_FIREBASE_AUTH_DOMAIN");
+  } else if (
+    /^https?:\/\//i.test(authDomain) ||
+    authDomain.includes("/") ||
+    authDomain.startsWith("demo-") ||
+    !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(authDomain)
+  ) {
+    malformedVars.push({
+      name: "VITE_FIREBASE_AUTH_DOMAIN",
+      reason: "doit être un nom de domaine seul sans https:// ni barre oblique (ex. shenaexpress-13924.firebaseapp.com)",
+    });
+  }
+
+  if (!projectId) {
+    missingVars.push("VITE_FIREBASE_PROJECT_ID");
+  } else if (projectId.startsWith("demo-") || !/^[a-z0-9-]{4,36}$/.test(projectId)) {
+    malformedVars.push({
+      name: "VITE_FIREBASE_PROJECT_ID",
+      reason: "doit contenir uniquement des lettres minuscules, chiffres et tirets (ex. shenaexpress-13924)",
+    });
+  }
+
+  if (!appId) {
+    missingVars.push("VITE_FIREBASE_APP_ID");
+  } else if (appId === DEMO_CONFIG.appId || !/^\d+:\d+:web:[0-9a-f]+$/i.test(appId)) {
+    malformedVars.push({
+      name: "VITE_FIREBASE_APP_ID",
+      reason: "doit respecter l'identifiant d'application Web Firebase au format 1:XXXX:web:XXXX",
+    });
+  }
+
+  if (missingVars.length === 0 && malformedVars.length === 0) {
+    return {
+      valid: true,
+      missingVars: [],
+      malformedVars: [],
+      config: {
+        apiKey,
+        authDomain,
+        projectId,
+        appId,
+        storageBucket,
+        messagingSenderId,
+        measurementId,
+        region,
+      },
+    };
+  }
+
+  const parts: string[] = [];
+  if (missingVars.length > 0) {
+    parts.push(`Variable(s) absente(s) lors du build : ${missingVars.join(", ")}.`);
+  }
+  if (malformedVars.length > 0) {
+    parts.push(
+      `Variable(s) mal formée(s) : ${malformedVars.map((m) => `${m.name} (${m.reason})`).join(" ; ")}.`,
+    );
+  }
+  parts.push("Configurez ces variables dans votre hébergeur (ex. Netlify > Environment variables) ou dans .env.local puis relancez un build.");
+
+  return {
+    valid: false,
+    missingVars,
+    malformedVars,
+    errorMessage: `Configuration Firebase de production invalide. ${parts.join(" ")}`,
+    config: null,
+  };
+}
+
 function readEnvConfig() {
-  const env = import.meta.env ?? {};
-  const apiKey = (env.VITE_FIREBASE_API_KEY as string | undefined)?.trim();
-  const authDomain = (env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined)?.trim();
-  const projectId = (env.VITE_FIREBASE_PROJECT_ID as string | undefined)?.trim();
-  const appId = (env.VITE_FIREBASE_APP_ID as string | undefined)?.trim();
-  const storageBucket = (env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined)?.trim();
-  const messagingSenderId = (env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined)?.trim();
-  const measurementId = (env.VITE_FIREBASE_MEASUREMENT_ID as string | undefined)?.trim();
-  const region = ((env.VITE_FIREBASE_FUNCTIONS_REGION as string | undefined) || "us-east1").trim();
-  const forceEmulators = (env.VITE_USE_EMULATORS as string | undefined)?.trim() === "true";
+  const env = (import.meta.env ?? {}) as Record<string, unknown>;
+  const validation = validateFirebaseEnv(env);
+  const region = cleanEnvValue(env.VITE_FIREBASE_FUNCTIONS_REGION) || "us-east1";
+  const forceEmulators = cleanEnvValue(env.VITE_USE_EMULATORS) === "true";
   const isProdBuild = Boolean(env.PROD) && !forceEmulators;
 
-  const hasRealConfig =
-    Boolean(apiKey && authDomain && projectId && appId) &&
-    !projectId!.startsWith("demo-") &&
-    apiKey !== "demo-api-key";
-
   if (isProdBuild) {
-    if (!hasRealConfig) {
+    if (!validation.valid || !validation.config) {
       return {
         state: {
           mode: "unconfigured" as const,
-          projectId: projectId || "",
+          projectId: cleanEnvValue(env.VITE_FIREBASE_PROJECT_ID),
           region,
-          configError:
-            "Configuration Firebase de production manquante ou invalide. Renseignez VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID et VITE_FIREBASE_APP_ID avant le build de production.",
+          configError: validation.errorMessage,
+          missingVars: validation.missingVars,
+          malformedVars: validation.malformedVars,
         },
         firebaseConfig: null,
       };
     }
     return {
-      state: { mode: "production" as const, projectId: projectId!, region },
-      firebaseConfig: {
-        apiKey: apiKey!,
-        authDomain: authDomain!,
-        projectId: projectId!,
-        appId: appId!,
-        storageBucket,
-        messagingSenderId,
-        measurementId,
-      },
+      state: { mode: "production" as const, projectId: validation.config.projectId, region },
+      firebaseConfig: validation.config,
     };
   }
 
-  if (hasRealConfig && !forceEmulators) {
+  if (validation.valid && validation.config && !forceEmulators) {
     return {
-      state: { mode: "production" as const, projectId: projectId!, region },
-      firebaseConfig: {
-        apiKey: apiKey!,
-        authDomain: authDomain!,
-        projectId: projectId!,
-        appId: appId!,
-        storageBucket,
-        messagingSenderId,
-        measurementId,
-      },
+      state: { mode: "production" as const, projectId: validation.config.projectId, region },
+      firebaseConfig: validation.config,
     };
   }
 

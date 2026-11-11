@@ -10,8 +10,8 @@ import {
   buildSearchTokens,
   type ClientDoc,
 } from "../../shared/index.js";
-import { db, parse, audit, nextSequence, FieldValue, fail, requirePermission, appUrl } from "./lib/core.js";
-import { sendPasswordResetEmail } from "./lib/identity.js";
+import { db, parse, audit, FieldValue, fail, requirePermission } from "./lib/core.js";
+import { sendPasswordResetEmail, createClientPasswordSetupLink } from "./lib/identity.js";
 import { callableOptions } from "./lib/options.js";
 
 /** Domaine technique réservé (RFC 2606) pour les clients sans e-mail : aucun message n'y est envoyé. */
@@ -34,16 +34,35 @@ async function assertNoDuplicate(phone: string, email: string | null, exceptClie
   }
 }
 
-/** Création d'un client : identifiant séquentiel unique, compte Auth sans mot de passe, invitation optionnelle. */
+/** Création d'un client : identifiant unique, compte Auth sans mot de passe, lien de configuration sécurisé. */
 export const createClient = onCall(callableOptions(), async (req) => {
   const actor = requirePermission(req, "clients.write");
   const input = parse(createClientSchema, req.data);
   await assertNoDuplicate(input.phone, input.email);
 
-  // 1) Réservation de l'identifiant (le compteur n'est jamais décrémenté : pas de réutilisation).
-  const clientId = await db().runTransaction(async (tx) => formatClientId(await nextSequence(tx, "clients")));
+  // 1) Réservation transactionnelle de l'identifiant (toutes les lectures avant l'écriture du compteur).
+  const clientId = await db().runTransaction(async (tx) => {
+    if (input.clientId) {
+      const customRef = db().doc(`clients/${input.clientId}`);
+      const customSnap = await tx.get(customRef);
+      if (customSnap.exists) {
+        fail("already-exists", `L'identifiant client ${input.clientId} est déjà attribué.`);
+      }
+      return input.clientId;
+    }
+    const counterRef = db().doc("counters/clients");
+    const counterSnap = await tx.get(counterRef);
+    let next = ((counterSnap.data()?.value as number | undefined) ?? 0) + 1;
+    let candidate = formatClientId(next);
+    while ((await tx.get(db().doc(`clients/${candidate}`))).exists) {
+      next += 1;
+      candidate = formatClientId(next);
+    }
+    tx.set(counterRef, { value: next, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return candidate;
+  });
 
-  // 2) Compte Firebase Auth (aucun mot de passe : le client le définit via le lien sécurisé).
+  // 2) Compte Firebase Auth (aucun mot de passe en clair : le client le définit via son lien sécurisé).
   const email = input.email ?? technicalEmail(clientId);
   let uid: string;
   try {
@@ -81,7 +100,8 @@ export const createClient = onCall(callableOptions(), async (req) => {
       address: input.address,
       city: input.city,
       status: "active",
-      searchTokens: clientTokens({ clientId, ...input }),
+      passwordConfigured: false,
+      searchTokens: clientTokens({ ...input, clientId }),
       createdAt: now,
       updatedAt: now,
     });
@@ -93,9 +113,9 @@ export const createClient = onCall(callableOptions(), async (req) => {
     throw e;
   }
 
-  let inviteSent = false;
-  if (input.sendInvite && input.email) inviteSent = await sendPasswordResetEmail(input.email);
-  return { clientId, inviteSent };
+  // 4) Génération systématique du lien sécurisé à usage unique permettant au client de définir son mot de passe.
+  const setupLink = await createClientPasswordSetupLink(email, clientId, uid);
+  return { clientId, setupLink, inviteSent: false };
 });
 
 export const updateClient = onCall(callableOptions(), async (req) => {
@@ -169,19 +189,30 @@ export const sendClientInvite = onCall(callableOptions(), async (req) => {
   if (!snap.exists) fail("not-found", "Client introuvable.");
   const client = snap.data() as ClientDoc;
   if (client.status !== "active") fail("failed-precondition", "Réactivez d'abord l'accès de ce client.");
-  if (!client.hasRealEmail || !client.email) fail("failed-precondition", "Ce client n'a pas d'adresse e-mail. Utilisez un lien d'accès à transmettre manuellement.");
+  if (!client.hasRealEmail || !client.email) {
+    fail("failed-precondition", "Ce client n'a pas d'adresse e-mail. Générez un lien de configuration à lui transmettre.");
+  }
+
+  // En mode émulateur, Firebase Auth n'envoie aucun e-mail réel : ne pas prétendre qu'un e-mail est parti.
+  if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    const link = await createClientPasswordSetupLink(client.email, clientId, client.clientUid);
+    const batch = db().batch();
+    audit(batch, actor, "client.invite", "client", clientId, `Lien d'invitation généré pour ${clientId} (mode émulateur sans SMTP)`);
+    await batch.commit();
+    return { sent: false, emulated: true, link };
+  }
+
   const sent = await sendPasswordResetEmail(client.email);
-  if (!sent) throw new HttpsError("unavailable", "L'e-mail n'a pas pu être envoyé. Réessayez plus tard.");
+  if (!sent) throw new HttpsError("unavailable", "L'e-mail n'a pas pu être envoyé. Utilisez un lien de configuration manuel.");
   const batch = db().batch();
-  audit(batch, actor, "client.invite", "client", clientId, `Invitation envoyée à ${clientId}`);
+  audit(batch, actor, "client.invite", "client", clientId, `Invitation e-mail envoyée à ${clientId}`);
   await batch.commit();
-  return { sent: true };
+  return { sent: true, emulated: false };
 });
 
 /**
- * Assistance administrative : génère un lien à usage unique (expiration courte) permettant au client
- * de définir un nouveau mot de passe, sans que l'administrateur ne le connaisse jamais.
- * À transmettre au client par un canal vérifié (WhatsApp officiel, en personne).
+ * Génère un lien sécurisé à usage unique (expiration 24h) permettant au client
+ * de définir son mot de passe sur /definir-mot-de-passe sans que l'administrateur ne le connaisse.
  */
 export const generateClientAccessLink = onCall(callableOptions(), async (req) => {
   const actor = requirePermission(req, "clients.write");
@@ -193,9 +224,37 @@ export const generateClientAccessLink = onCall(callableOptions(), async (req) =>
   const user = await getAuth().getUser(client.clientUid);
   if (!user.email) fail("failed-precondition", "Compte incomplet.");
   await getAuth().revokeRefreshTokens(client.clientUid);
-  const link = await getAuth().generatePasswordResetLink(user.email, { url: `${appUrl()}/connexion` });
+  const link = await createClientPasswordSetupLink(user.email, clientId, client.clientUid);
   const batch = db().batch();
-  audit(batch, actor, "client.access_link", "client", clientId, `Lien d'accès généré pour ${clientId} (sessions révoquées)`);
+  audit(batch, actor, "client.access_link", "client", clientId, `Lien de configuration généré pour ${clientId} (sessions révoquées)`);
+  await batch.commit();
+  return { link };
+});
+
+/**
+ * Réinitialise l'accès du client : révoque ses sessions actives, repasse le compte en attente
+ * de configuration et génère un nouveau lien sécurisé de réinitialisation du mot de passe.
+ */
+export const resetClientPassword = onCall(callableOptions(), async (req) => {
+  const actor = requirePermission(req, "clients.write");
+  const { clientId } = parse(clientRefSchema, req.data);
+  const ref = db().doc(`clients/${clientId}`);
+  const snap = await ref.get();
+  if (!snap.exists) fail("not-found", "Client introuvable.");
+  const client = snap.data() as ClientDoc;
+  if (client.status !== "active") fail("failed-precondition", "Réactivez d'abord l'accès de ce client.");
+  const user = await getAuth().getUser(client.clientUid);
+  if (!user.email) fail("failed-precondition", "Compte incomplet.");
+
+  await getAuth().revokeRefreshTokens(client.clientUid);
+  const link = await createClientPasswordSetupLink(user.email, clientId, client.clientUid);
+
+  const batch = db().batch();
+  batch.update(ref, {
+    passwordConfigured: false,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  audit(batch, actor, "client.password_reset", "client", clientId, `Réinitialisation du mot de passe pour ${clientId} (sessions révoquées)`);
   await batch.commit();
   return { link };
 });

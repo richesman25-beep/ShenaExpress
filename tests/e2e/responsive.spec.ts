@@ -34,5 +34,10 @@ test.describe("15. Affichage responsive mobile Android & desktop + contrôle d'a
     await page.goto("/admin");
     await expect(page).toHaveURL(/\/admin\/connexion$/);
     await expect(page.getByRole("heading", { name: "Connexion administrateur" })).toBeVisible();
+
+    // Vérifie la page de définition de mot de passe (/definir-mot-de-passe) sans jeton valide
+    await page.goto("/definir-mot-de-passe");
+    await expect(page.getByRole("heading", { name: "Définir votre mot de passe" })).toBeVisible();
+    await expect(page.getByRole("alert")).toContainText(/Lien incomplet/i);
   });
 });

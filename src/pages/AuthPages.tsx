@@ -1,6 +1,17 @@
-import { useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, Lock, UserCheck, ShieldCheck, KeyRound, AlertCircle, CheckCircle2, ArrowLeft } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  UserCheck,
+  ShieldCheck,
+  KeyRound,
+  AlertCircle,
+  CheckCircle2,
+  ArrowLeft,
+  Copy,
+} from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useI18n } from "@/i18n";
@@ -126,12 +137,27 @@ export function ClientLoginPage() {
   const { user, claims, loading, signInClient, isBackOffice } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
-  const [identifier, setIdentifier] = useState("");
+  const oobFromUrl = searchParams.get("oobCode");
+  const prefillClientId = searchParams.get("clientId") ?? "";
+
+  const [identifier, setIdentifier] = useState(prefillClientId);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  if (oobFromUrl) {
+    return (
+      <Navigate
+        to={`/definir-mot-de-passe?oobCode=${encodeURIComponent(oobFromUrl)}${
+          prefillClientId ? `&clientId=${encodeURIComponent(prefillClientId)}` : ""
+        }`}
+        replace
+      />
+    );
+  }
 
   if (!loading && user && claims?.role === "client") {
     return <Navigate to="/espace-client" replace />;
@@ -474,6 +500,263 @@ export function PasswordResetPage() {
           </div>
         </div>
       </div>
+    </AuthShell>
+  );
+}
+
+/* ---------------------------- Définition / Réinitialisation Mot de passe */
+export function PasswordSetupPage() {
+  const [searchParams] = useSearchParams();
+  const oobCode = searchParams.get("oobCode")?.trim() ?? "";
+  const urlClientId = searchParams.get("clientId")?.trim() ?? "";
+
+  const [verifying, setVerifying] = useState<boolean>(Boolean(oobCode));
+  const [tokenValid, setTokenValid] = useState<boolean>(false);
+  const [clientId, setClientId] = useState<string>(urlClientId);
+  const [fullName, setFullName] = useState<string>("");
+
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!oobCode) {
+      setVerifying(false);
+      setTokenValid(false);
+      setError("Lien incomplet : aucun code de sécurité n'est présent dans l'adresse.");
+      return;
+    }
+    let cancelled = false;
+    setVerifying(true);
+    setError(null);
+    api
+      .verifyPasswordSetupToken({ oobCode })
+      .then((res) => {
+        if (cancelled) return;
+        setTokenValid(res.valid);
+        setClientId(res.clientId);
+        setFullName(res.fullName);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setTokenValid(false);
+        setError(formatError(err));
+      })
+      .finally(() => {
+        if (!cancelled) setVerifying(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [oobCode]);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setError("Le mot de passe doit contenir au moins 8 caractères, dont au moins une lettre et un chiffre.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("La confirmation du mot de passe ne correspond pas.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await api.completePasswordSetup({ oobCode, newPassword });
+      setClientId(res.clientId);
+      setCompleted(true);
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <AuthShell
+      eyebrow="ACTIVATION & SÉCURITÉ DU COMPTE"
+      title={completed ? "Mot de passe enregistré" : "Définir votre mot de passe"}
+      subtitle={
+        completed
+          ? "Votre compte SHENA Express est maintenant actif. Vous pouvez vous connecter avec votre identifiant client."
+          : "Choisissez un mot de passe personnel sécurisé pour accéder à votre espace de suivi."
+      }
+      footer={
+        <div className="flex items-center justify-between text-xs">
+          <Link
+            to={clientId ? `/connexion?clientId=${encodeURIComponent(clientId)}` : "/connexion"}
+            className="inline-flex items-center gap-1 font-semibold text-royal-600 hover:underline"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Aller à la page de connexion</span>
+          </Link>
+        </div>
+      }
+    >
+      {verifying ? (
+        <div className="py-8 text-center text-sm font-semibold text-slate-600">
+          Vérification du lien de sécurité…
+        </div>
+      ) : completed ? (
+        <div className="space-y-4">
+          <div
+            role="status"
+            className="flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-xs font-medium text-emerald-950"
+          >
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" aria-hidden="true" />
+            <div>
+              <div className="font-bold">Votre mot de passe a été configuré avec succès.</div>
+              <div className="mt-1 text-emerald-900">
+                Ce lien à usage unique est désormais désactivé. Conservez précieusement votre identifiant client ci-dessous.
+              </div>
+            </div>
+          </div>
+
+          {clientId && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-bold uppercase text-slate-500">Votre identifiant client</div>
+                <div className="text-lg font-extrabold text-navy-900">{clientId}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(clientId);
+                  setCopiedId(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-navy-900 hover:bg-slate-100"
+              >
+                <Copy className="h-3.5 w-3.5 text-royal-600" aria-hidden="true" />
+                <span>{copiedId ? "Identifiant copié" : "Copier l'identifiant"}</span>
+              </button>
+            </div>
+          )}
+
+          <Link
+            to={clientId ? `/connexion?clientId=${encodeURIComponent(clientId)}` : "/connexion"}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-royal-600 px-4 py-3 text-sm font-bold text-white shadow-xs hover:bg-royal-700"
+          >
+            <UserCheck className="h-4 w-4" aria-hidden="true" />
+            <span>Se connecter à mon espace client</span>
+          </Link>
+        </div>
+      ) : !tokenValid ? (
+        <div className="space-y-4">
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-medium text-rose-900"
+          >
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" aria-hidden="true" />
+            <span>{error ?? "Ce lien de configuration est invalide, expiré ou a déjà été utilisé."}</span>
+          </div>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Pour votre sécurité, chaque lien de configuration est à usage unique et limité dans le temps. Vous pouvez demander un nouveau lien ou contacter l&apos;équipe SHENA Express.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to="/mot-de-passe-oublie"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-royal-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-royal-700"
+            >
+              <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Demander un nouveau lien</span>
+            </Link>
+            <WhatsappContactButton clientId={clientId || undefined} compact />
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
+          {error && (
+            <div
+              role="alert"
+              className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-medium text-rose-900"
+            >
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-bold uppercase text-slate-500">Compte client</div>
+              <div className="text-sm font-extrabold text-navy-900">
+                {clientId} {fullName ? `— ${fullName}` : ""}
+              </div>
+            </div>
+            {clientId && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(clientId);
+                  setCopiedId(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+              >
+                <Copy className="h-3.5 w-3.5 text-royal-600" aria-hidden="true" />
+                <span>{copiedId ? "Copié" : "Copier l'ID"}</span>
+              </button>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="setup-new-password" className="block text-xs font-bold text-slate-700 mb-1.5">
+              Nouveau mot de passe *
+            </label>
+            <div className="relative flex items-center">
+              <input
+                id="setup-new-password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                required
+                disabled={submitting}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Au moins 8 caractères (lettres et chiffres)"
+                className="w-full rounded-xl border border-slate-300 bg-white ps-3.5 pe-11 py-2.5 text-sm text-slate-900 focus:border-royal-600"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                className="absolute right-2.5 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="setup-confirm-password" className="block text-xs font-bold text-slate-700 mb-1.5">
+              Confirmer le mot de passe *
+            </label>
+            <input
+              id="setup-confirm-password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="new-password"
+              required
+              disabled={submitting}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-royal-600"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-royal-600 px-4 py-3 text-sm font-bold text-white shadow-xs transition hover:bg-royal-700 disabled:opacity-60"
+          >
+            <KeyRound className="h-4 w-4" aria-hidden="true" />
+            <span>{submitting ? "Activation en cours…" : "Enregistrer mon mot de passe"}</span>
+          </button>
+        </form>
+      )}
     </AuthShell>
   );
 }

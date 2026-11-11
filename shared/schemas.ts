@@ -64,7 +64,32 @@ export const clientSignInSchema = z.object({
 });
 export const passwordResetSchema = z.object({ identifier: required(254, "L'identifiant ou l'e-mail") });
 
+export const verifySetupTokenSchema = z.object({
+  oobCode: required(512, "Le code de sécurité"),
+});
+
+export const completePasswordSetupSchema = z.object({
+  oobCode: required(512, "Le code de sécurité"),
+  newPassword: z
+    .string()
+    .min(8, { message: "Le mot de passe doit contenir au moins 8 caractères." })
+    .max(256, { message: "256 caractères maximum." })
+    .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), {
+      message: "Le mot de passe doit contenir au moins une lettre et un chiffre.",
+    }),
+});
+
 /* ------------------------------------------------------------- clients */
+const optionalCustomClientId = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .nullish()
+  .refine((v) => !v || CLIENT_ID_RE.test(v), {
+    message: "Identifiant client invalide (ex. SHE-CLIENT-001 ou SHENA-0001).",
+  })
+  .transform((v) => (v ? v : null));
+
 export const clientProfileSchema = z.object({
   fullName: required(120, "Le nom complet"),
   phone: phoneSchema,
@@ -76,6 +101,7 @@ export const clientProfileSchema = z.object({
 export type ClientProfileInput = z.input<typeof clientProfileSchema>;
 
 export const createClientSchema = clientProfileSchema.extend({
+  clientId: optionalCustomClientId,
   notes: optionalText(4000),
   sendInvite: z.boolean().default(true),
 });

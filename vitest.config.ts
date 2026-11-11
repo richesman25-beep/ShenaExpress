@@ -27,7 +27,7 @@ export default defineConfig({
           name: "emulator",
           environment: "node",
           include: ["tests/emulator/**/*.test.ts"],
-          testTimeout: 120000,
+          testTimeout: 240000,
           fileParallelism: false,
         },
       },

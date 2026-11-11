@@ -32,10 +32,11 @@ export interface UserDoc {
 
 /* ---------------------------------------------------------------- clients */
 export type AccountStatus = "active" | "disabled";
+export type ClientAccessState = "pending_setup" | "active" | "disabled";
 
 /** clients/{clientId} — lisible par le client propriétaire et le personnel autorisé. */
 export interface ClientDoc {
-  clientId: string; // ex. SHE-CLIENT-001
+  clientId: string; // ex. SHE-CLIENT-001 ou SHENA-0001
   clientUid: string; // uid Firebase Auth du propriétaire
   fullName: string;
   phone: string;
@@ -46,11 +47,25 @@ export interface ClientDoc {
   address?: string | null;
   city?: string | null;
   status: AccountStatus;
+  /** true dès que le client a défini son mot de passe personnel. */
+  passwordConfigured?: boolean;
   /** Mots-clés normalisés pour la recherche (identifiant, nom, téléphone). */
   searchTokens: string[];
   createdAt: FireTime;
   updatedAt: FireTime;
 }
+
+export function getClientAccessState(client: Pick<ClientDoc, "status" | "passwordConfigured">): ClientAccessState {
+  if (client.status === "disabled") return "disabled";
+  if (client.passwordConfigured === false) return "pending_setup";
+  return "active";
+}
+
+export const CLIENT_ACCESS_LABELS: Record<ClientAccessState, string> = {
+  pending_setup: "En attente de configuration",
+  active: "Actif",
+  disabled: "Désactivé",
+};
 
 /** clientNotes/{clientId} — notes privées, jamais lisibles par le client. */
 export interface ClientNotesDoc {

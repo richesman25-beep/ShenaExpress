@@ -24,10 +24,14 @@ import {
   createClientSchema,
   createOrderSchema,
   updateStatusSchema,
+  completePasswordSetupSchema,
+  getClientAccessState,
+  CLIENT_ACCESS_LABELS,
   type OrderItem,
   type ChargeLine,
 } from "@shared/index";
 import { formatError } from "@/lib/api";
+import { validateFirebaseEnv } from "@/lib/firebase";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import {
   StatusBadge,
@@ -240,6 +244,52 @@ describe("14. Gestion des erreurs et des données manquantes", () => {
     expect(formatError({ code: "auth/invalid-credential" })).toBe("Identifiant ou mot de passe incorrect.");
     expect(formatError({ code: "auth/user-disabled" })).toContain("désactivé");
     expect(formatError({ code: "functions/permission-denied" })).toContain("Accès refusé");
+
+    // Identifiants clients supportés (SHE-CLIENT-001, SHENA-0001) et statuts d'accès
+    expect(createClientSchema.safeParse({ fullName: "Client Test", phone: "+509 34 00 00 00", clientId: "SHENA-0001" }).success).toBe(true);
+    expect(createClientSchema.safeParse({ fullName: "Client Test", phone: "+509 34 00 00 00", clientId: "SHE-CLIENT-001" }).success).toBe(true);
+    expect(createClientSchema.safeParse({ fullName: "Client Test", phone: "+509 34 00 00 00", clientId: "BAD ID" }).success).toBe(false);
+
+    expect(getClientAccessState({ status: "active", passwordConfigured: false })).toBe("pending_setup");
+    expect(CLIENT_ACCESS_LABELS[getClientAccessState({ status: "active", passwordConfigured: false })]).toBe("En attente de configuration");
+    expect(getClientAccessState({ status: "active", passwordConfigured: true })).toBe("active");
+    expect(getClientAccessState({ status: "disabled", passwordConfigured: true })).toBe("disabled");
+
+    expect(completePasswordSetupSchema.safeParse({ oobCode: "code123", newPassword: "short" }).success).toBe(false);
+    expect(completePasswordSetupSchema.safeParse({ oobCode: "code123", newPassword: "StrongPassword123" }).success).toBe(true);
+
+    // Validation de la configuration Firebase : distinction claire entre variables absentes et mal formées sans exposer de secret
+    const missingRes = validateFirebaseEnv({});
+    expect(missingRes.valid).toBe(false);
+    expect(missingRes.missingVars).toEqual([
+      "VITE_FIREBASE_API_KEY",
+      "VITE_FIREBASE_AUTH_DOMAIN",
+      "VITE_FIREBASE_PROJECT_ID",
+      "VITE_FIREBASE_APP_ID",
+    ]);
+    expect(missingRes.errorMessage).toContain("Variable(s) absente(s) lors du build");
+
+    const malformedRes = validateFirebaseEnv({
+      VITE_FIREBASE_API_KEY: "cle-invalide-secrète-ne-pas-afficher",
+      VITE_FIREBASE_AUTH_DOMAIN: "https://shenaexpress-13924.firebaseapp.com/",
+      VITE_FIREBASE_PROJECT_ID: "UPPERCASE_INVALID",
+      VITE_FIREBASE_APP_ID: "bad-app-id",
+    });
+    expect(malformedRes.valid).toBe(false);
+    expect(malformedRes.missingVars).toHaveLength(0);
+    expect(malformedRes.malformedVars).toHaveLength(4);
+    expect(malformedRes.errorMessage).toContain("Variable(s) mal formée(s)");
+    expect(malformedRes.errorMessage).not.toContain("cle-invalide-secrète-ne-pas-afficher");
+
+    // Tolère les guillemets et virgules copiés par erreur depuis un extrait JS dans Netlify
+    const quotedRes = validateFirebaseEnv({
+      VITE_FIREBASE_API_KEY: '"AIzaSyDzb42MNgabaOKe3brkWp7S3uXMa8WhLxE",',
+      VITE_FIREBASE_AUTH_DOMAIN: '"shenaexpress-13924.firebaseapp.com",',
+      VITE_FIREBASE_PROJECT_ID: '"shenaexpress-13924",',
+      VITE_FIREBASE_APP_ID: '"1:447281041430:web:ce2292f951c29f9fc86537"',
+    });
+    expect(quotedRes.valid).toBe(true);
+    expect(quotedRes.config?.projectId).toBe("shenaexpress-13924");
   });
 });
 
