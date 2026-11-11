@@ -29,3 +29,4 @@ pubsub-debug.log
 test-results/
 playwright-report/
 backups/
+*.zip
