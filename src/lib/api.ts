@@ -17,6 +17,9 @@ export function formatError(err: unknown): string {
   const code = (err as { code?: string }).code ?? "";
   const message = (err as { message?: string }).message ?? "";
 
+  if (code.includes("configuration-not-found") || message.includes("CONFIGURATION_NOT_FOUND")) {
+    return "Firebase Authentication (Adresse e-mail / Mot de passe) n'est pas encore activé dans la Console Firebase de votre projet (creo-store). Activez-le dans Console Firebase > Authentication > Sign-in method.";
+  }
   if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) {
     return "Identifiant ou mot de passe incorrect.";
   }

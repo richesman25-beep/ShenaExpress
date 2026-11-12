@@ -20,11 +20,14 @@ export interface Actor {
   claims: AuthClaims;
 }
 
+const PRIMARY_ADMIN_EMAIL = "shenyderj2000@gmail.com";
+
 /** Exige une session authentifiée. */
 export function requireAuth(req: CallableRequest<unknown>): Actor {
   if (!req.auth) throw new HttpsError("unauthenticated", "Vous devez être connecté.");
   const token = req.auth.token as Record<string, unknown>;
-  const role = token.role as Role | undefined;
+  const email = typeof token.email === "string" ? token.email.toLowerCase() : "";
+  const role = (token.role as Role | undefined) ?? (email === PRIMARY_ADMIN_EMAIL ? "admin" : undefined);
   if (!role) throw new HttpsError("permission-denied", "Aucun rôle n'est associé à ce compte.");
   return { uid: req.auth.uid, role, claims: { role, perms: token.perms as Permission[] | undefined, clientId: token.clientId as string | undefined } };
 }
