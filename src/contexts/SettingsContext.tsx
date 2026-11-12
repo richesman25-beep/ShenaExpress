@@ -6,8 +6,8 @@ import { statusLabel, type PublicSettingsDoc, type StatusCode } from "@shared/in
 const DEFAULT_SETTINGS: PublicSettingsDoc = {
   companyName: "SHENA Express",
   logoUrl: null,
-  whatsappNumber: null,
-  contactEmail: null,
+  whatsappNumber: "50956135256",
+  contactEmail: "shenyderj2000@gmail.com",
   address: null,
   serviceArea: null,
   currency: "USD",
@@ -57,6 +57,8 @@ export function SettingsProvider({
           setSettings({
             ...DEFAULT_SETTINGS,
             ...data,
+            whatsappNumber: data.whatsappNumber || DEFAULT_SETTINGS.whatsappNumber,
+            contactEmail: data.contactEmail || DEFAULT_SETTINGS.contactEmail,
             modules: { finance: data.modules?.finance ?? true },
           });
         } else {

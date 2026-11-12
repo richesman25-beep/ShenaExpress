@@ -99,8 +99,8 @@ export async function nextSequence(tx: Transaction, name: string): Promise<numbe
 export const DEFAULT_PUBLIC_SETTINGS: PublicSettingsDoc = {
   companyName: "SHENA Express",
   logoUrl: null,
-  whatsappNumber: null,
-  contactEmail: null,
+  whatsappNumber: "50956135256",
+  contactEmail: "shenyderj2000@gmail.com",
   address: null,
   serviceArea: null,
   currency: "USD",
