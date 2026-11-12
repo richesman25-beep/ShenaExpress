@@ -245,10 +245,12 @@ describe("14. Gestion des erreurs et des données manquantes", () => {
     expect(formatError({ code: "auth/user-disabled" })).toContain("désactivé");
     expect(formatError({ code: "functions/permission-denied" })).toContain("Accès refusé");
 
-    // Identifiants clients supportés (SHE-CLIENT-001, SHENA-0001) et statuts d'accès
+    // Identifiants clients supportés (SHE-CLIENT-001, SHENA-0001, SHENA-001) et statuts d'accès
+    expect(createClientSchema.safeParse({ fullName: "Client Test", phone: "+509 34 00 00 00", clientId: "SHENA-001" }).success).toBe(true);
     expect(createClientSchema.safeParse({ fullName: "Client Test", phone: "+509 34 00 00 00", clientId: "SHENA-0001" }).success).toBe(true);
     expect(createClientSchema.safeParse({ fullName: "Client Test", phone: "+509 34 00 00 00", clientId: "SHE-CLIENT-001" }).success).toBe(true);
     expect(createClientSchema.safeParse({ fullName: "Client Test", phone: "+509 34 00 00 00", clientId: "BAD ID" }).success).toBe(false);
+    expect(formatError({ code: "functions/internal", message: "internal [0]" })).not.toContain("internal [0]");
 
     expect(getClientAccessState({ status: "active", passwordConfigured: false })).toBe("pending_setup");
     expect(CLIENT_ACCESS_LABELS[getClientAccessState({ status: "active", passwordConfigured: false })]).toBe("En attente de configuration");

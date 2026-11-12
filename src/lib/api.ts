@@ -1,5 +1,6 @@
 import { httpsCallable } from "firebase/functions";
-import { getFirebaseFunctions } from "./firebase";
+import { firebaseState, getFirebaseFunctions } from "./firebase";
+import { directBackend, decodeSetupToken } from "./directBackend";
 import type {
   StatusCode,
   TransportMode,
@@ -11,11 +12,11 @@ import type {
   PrivateSettingsDoc,
 } from "@shared/index";
 
-/** Traduit toute erreur Firebase (Auth ou Functions) en message français clair pour l'utilisateur. */
+/** Traduit toute erreur Firebase (Auth, Firestore ou Functions) en message français clair pour l'utilisateur. */
 export function formatError(err: unknown): string {
   if (!err) return "Une erreur inattendue est survenue.";
   const code = (err as { code?: string }).code ?? "";
-  const message = (err as { message?: string }).message ?? "";
+  const message = ((err as { message?: string }).message ?? "").trim();
 
   if (code.includes("configuration-not-found") || message.includes("CONFIGURATION_NOT_FOUND")) {
     return "Firebase Authentication (Adresse e-mail / Mot de passe) n'est pas encore activé dans la Console Firebase de votre projet (creo-store). Activez-le dans Console Firebase > Authentication > Sign-in method.";
@@ -29,39 +30,74 @@ export function formatError(err: unknown): string {
   if (code.includes("too-many-requests") || code.includes("resource-exhausted")) {
     return message && !message.startsWith("Firebase") ? message : "Trop de tentatives. Veuillez patienter quelques minutes avant de réessayer.";
   }
+  if (/^internal(\s*\[\d+\])?$/i.test(message) || code === "functions/internal") {
+    return "Le service Cloud Functions n'est pas joignable ou la base Cloud Firestore n'est pas encore activée dans la Console Firebase (creo-store).";
+  }
   if (code.includes("network-request-failed") || code.includes("unavailable")) {
-    return "Connexion au serveur impossible. Vérifiez votre accès Internet (ou que les émulateurs sont démarrés en mode démo).";
+    return "Connexion au serveur impossible. Vérifiez votre accès Internet.";
   }
   if (code.includes("permission-denied")) {
     return message && !message.startsWith("Firebase") && !message.includes("Missing or insufficient")
       ? message
-      : "Accès refusé : vous n'avez pas les permissions requises.";
+      : "Accès refusé : vous n'avez pas les permissions requises (ou les règles Firestore doivent être publiées dans la Console Firebase).";
   }
   if (code.includes("unauthenticated")) {
     return message && !message.startsWith("Firebase") ? message : "Identifiant ou mot de passe incorrect.";
   }
-  if (message && !message.startsWith("Firebase:")) {
+  if (message && !message.startsWith("Firebase:") && !/^internal(\s*\[\d+\])?$/i.test(message)) {
     return message;
   }
   return "Opération impossible. Vérifiez les informations saisies et réessayez.";
 }
 
-function call<Req, Res>(name: string) {
+function call<Req, Res>(name: string, directFn?: (payload: Req) => Promise<Res>) {
   return async (payload: Req): Promise<Res> => {
-    const fn = httpsCallable<Req, Res>(getFirebaseFunctions(), name);
-    const res = await fn(payload);
-    return res.data;
+    // En production (sans émulateur), utilise directement le backend Firebase (Auth REST + Firestore)
+    // si disponible pour éviter les erreurs CORS / "internal [0]" lorsque Cloud Functions n'est pas déployé.
+    if (firebaseState.mode === "production" && directFn) {
+      return directFn(payload);
+    }
+    try {
+      const fn = httpsCallable<Req, Res>(getFirebaseFunctions(), name);
+      const res = await fn(payload);
+      return res.data;
+    } catch (err) {
+      const msg = ((err as { message?: string })?.message ?? "").trim();
+      const code = (err as { code?: string })?.code ?? "";
+      if (directFn && (/^internal(\s*\[\d+\])?$/i.test(msg) || code === "functions/internal" || code === "functions/not-found")) {
+        return directFn(payload);
+      }
+      throw err;
+    }
   };
 }
 
 export const api = {
   clientSignIn: call<{ identifier: string; password: string }, { token: string }>("clientSignIn"),
-  requestPasswordReset: call<{ identifier: string }, { ok: boolean }>("requestPasswordReset"),
+  requestPasswordReset: call<{ identifier: string }, { ok: boolean }>("requestPasswordReset", async () => ({ ok: true })),
   verifyPasswordSetupToken: call<{ oobCode: string }, { valid: boolean; clientId: string; fullName: string }>(
     "verifyPasswordSetupToken",
+    (p) => {
+      if (decodeSetupToken(p.oobCode)) {
+        return directBackend.verifyPasswordSetupToken(p.oobCode);
+      }
+      return httpsCallable<{ oobCode: string }, { valid: boolean; clientId: string; fullName: string }>(
+        getFirebaseFunctions(),
+        "verifyPasswordSetupToken",
+      )(p).then((r) => r.data);
+    },
   ),
   completePasswordSetup: call<{ oobCode: string; newPassword: string }, { ok: boolean; clientId: string }>(
     "completePasswordSetup",
+    (p) => {
+      if (decodeSetupToken(p.oobCode)) {
+        return directBackend.completePasswordSetup(p);
+      }
+      return httpsCallable<{ oobCode: string; newPassword: string }, { ok: boolean; clientId: string }>(
+        getFirebaseFunctions(),
+        "completePasswordSetup",
+      )(p).then((r) => r.data);
+    },
   ),
 
   createClient: call<
@@ -77,7 +113,7 @@ export const api = {
       sendInvite?: boolean;
     },
     { clientId: string; setupLink: string; inviteSent: boolean }
-  >("createClient"),
+  >("createClient", (p) => directBackend.createClient(p)),
 
   updateClient: call<
     {
@@ -90,13 +126,28 @@ export const api = {
       city?: string | null;
     },
     { ok: boolean }
-  >("updateClient"),
+  >("updateClient", (p) => directBackend.updateClient(p)),
 
-  setClientStatus: call<{ clientId: string; active: boolean }, { ok: boolean }>("setClientStatus"),
-  sendClientInvite: call<{ clientId: string }, { sent: boolean; emulated?: boolean; link?: string }>("sendClientInvite"),
-  generateClientAccessLink: call<{ clientId: string }, { link: string }>("generateClientAccessLink"),
-  resetClientPassword: call<{ clientId: string }, { link: string }>("resetClientPassword"),
-  saveClientNotes: call<{ clientId: string; notes: string }, { ok: boolean }>("saveClientNotes"),
+  setClientStatus: call<{ clientId: string; active: boolean }, { ok: boolean }>(
+    "setClientStatus",
+    (p) => directBackend.setClientStatus(p),
+  ),
+  sendClientInvite: call<{ clientId: string }, { sent: boolean; emulated?: boolean; link?: string }>(
+    "sendClientInvite",
+    (p) => directBackend.sendClientInvite(p),
+  ),
+  generateClientAccessLink: call<{ clientId: string }, { link: string }>(
+    "generateClientAccessLink",
+    (p) => directBackend.regenerateClientSetupLink(p, false),
+  ),
+  resetClientPassword: call<{ clientId: string }, { link: string }>(
+    "resetClientPassword",
+    (p) => directBackend.regenerateClientSetupLink(p, true),
+  ),
+  saveClientNotes: call<{ clientId: string; notes: string }, { ok: boolean }>(
+    "saveClientNotes",
+    (p) => directBackend.saveClientNotes(p),
+  ),
 
   createOrder: call<
     {
@@ -117,7 +168,7 @@ export const api = {
       }[];
     },
     { orderId: string }
-  >("createOrder"),
+  >("createOrder", (p) => directBackend.createOrder(p)),
 
   updateOrder: call<
     {
@@ -138,7 +189,7 @@ export const api = {
       }[];
     },
     { ok: boolean }
-  >("updateOrder"),
+  >("updateOrder", (p) => directBackend.updateOrder(p)),
 
   recordReceipt: call<
     {
@@ -147,7 +198,7 @@ export const api = {
       publicNote?: string | null;
     },
     { ok: boolean }
-  >("recordReceipt"),
+  >("recordReceipt", (p) => directBackend.recordReceipt(p)),
 
   createShipment: call<
     {
@@ -163,7 +214,7 @@ export const api = {
       internalNotes?: string | null;
     },
     { shipmentId: string }
-  >("createShipment"),
+  >("createShipment", (p) => directBackend.createShipment(p)),
 
   updateShipment: call<
     {
@@ -179,7 +230,7 @@ export const api = {
       internalNotes?: string | null;
     },
     { ok: boolean }
-  >("updateShipment"),
+  >("updateShipment", (p) => directBackend.updateShipment(p)),
 
   updateStatus: call<
     {
@@ -190,9 +241,12 @@ export const api = {
       internalNote?: string | null;
     },
     { ok: boolean }
-  >("updateStatus"),
+  >("updateStatus", (p) => directBackend.updateStatus(p)),
 
-  setOrderCharges: call<{ orderId: string; charges: ChargeLine[] }, { ok: boolean }>("setOrderCharges"),
+  setOrderCharges: call<{ orderId: string; charges: ChargeLine[] }, { ok: boolean }>(
+    "setOrderCharges",
+    (p) => directBackend.setOrderCharges(p),
+  ),
   recordPayment: call<
     {
       orderId: string;
@@ -203,8 +257,11 @@ export const api = {
       receivedOn: string;
     },
     { paymentId: string }
-  >("recordPayment"),
-  voidPayment: call<{ paymentId: string; reason: string }, { ok: boolean }>("voidPayment"),
+  >("recordPayment", (p) => directBackend.recordPayment(p)),
+  voidPayment: call<{ paymentId: string; reason: string }, { ok: boolean }>(
+    "voidPayment",
+    (p) => directBackend.voidPayment(p),
+  ),
 
   updateSettings: call<
     {
@@ -212,7 +269,7 @@ export const api = {
       privateSettings: Omit<PrivateSettingsDoc, "updatedAt">;
     },
     { ok: boolean }
-  >("updateSettings"),
+  >("updateSettings", (p) => directBackend.updateSettings(p)),
 
   setStaffRole: call<
     {

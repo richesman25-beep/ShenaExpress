@@ -21,70 +21,87 @@ service cloud.firestore {
     function can(perm) {
       return isAdmin() || (isStaff() && claims().perms is list && perm in claims().perms);
     }
-    function isClient() { return signedIn() && claims().role == 'client'; }
+    function isClient() {
+      return signedIn() && (
+        claims().role == 'client' ||
+        (request.auth.token.email is string && request.auth.token.email.matches('.*@clients[.]shena-express[.]invalid$'))
+      );
+    }
     // Le document appartient au client connecté.
     function ownsDoc() { return isClient() && resource.data.clientUid == request.auth.uid; }
     function financeEnabled() {
       return get(/databases/$(database)/documents/settings/public).data.modules.finance == true;
     }
 
-    // --- Profils utilisateurs (rôle) : lecture de soi-même, aucune écriture client.
+    // --- Profils utilisateurs (rôle) : lecture de soi-même, écriture réservée aux administrateurs / gestionnaires clients.
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || can('clients.read'));
-      allow write: if false;
+      allow write: if can('clients.write') || isAdmin();
+    }
+
+    // --- Table de routage technique d'identifiant client (uniquement adresse technique .invalid, aucune donnée personnelle)
+    match /clientAuth/{clientId} {
+      allow get: if true;
+      allow list: if can('clients.read');
+      allow write: if can('clients.write');
     }
 
     // --- Fiches clients
     match /clients/{clientId} {
       allow read: if ownsDoc() || can('clients.read');
-      allow write: if false;
+      allow create, delete: if can('clients.write');
+      allow update: if can('clients.write') || (
+        ownsDoc() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['passwordConfigured', 'updatedAt']) &&
+        request.resource.data.passwordConfigured == true
+      );
     }
     // Notes administratives privées : jamais lisibles par un client.
     match /clientNotes/{clientId} {
       allow read: if can('clients.read');
-      allow write: if false;
+      allow write: if can('clients.write');
     }
 
     // --- Commandes
     match /orders/{orderId} {
       allow read: if ownsDoc() || can('orders.read');
-      allow write: if false;
+      allow write: if can('orders.write') || can('shipments.write');
     }
     match /orderPrivate/{orderId} {
       allow read: if can('orders.read');
-      allow write: if false;
+      allow write: if can('orders.write');
     }
 
     // --- Colis
     match /shipments/{shipmentId} {
       allow read: if ownsDoc() || can('shipments.read');
-      allow write: if false;
+      allow write: if can('shipments.write') || can('clients.write');
     }
     match /shipmentPrivate/{shipmentId} {
       allow read: if can('shipments.read');
-      allow write: if false;
+      allow write: if can('shipments.write');
     }
 
     // --- Chronologie du suivi (aucune note interne n'y est stockée)
     match /shipmentEvents/{eventId} {
       allow read: if ownsDoc() || can('shipments.read') || can('orders.read');
-      allow write: if false;
+      allow write: if can('shipments.write') || can('orders.write');
     }
 
     // Notes internes liées aux événements : personnel uniquement.
     match /shipmentEventsPrivate/{eventId} {
       allow read: if can('shipments.read') || can('orders.read');
-      allow write: if false;
+      allow write: if can('shipments.write') || can('orders.write');
     }
 
     // --- Finances (module optionnel)
     match /orderFinance/{orderId} {
       allow read: if (ownsDoc() && financeEnabled()) || can('finance.read');
-      allow write: if false;
+      allow write: if can('finance.write') || can('orders.write') || can('clients.write');
     }
     match /paymentRecords/{paymentId} {
       allow read: if (ownsDoc() && financeEnabled()) || can('finance.read');
-      allow write: if false;
+      allow write: if can('finance.write');
     }
 
     // --- Notifications : le destinataire peut seulement marquer comme lue.
@@ -94,27 +111,33 @@ service cloud.firestore {
         && resource.data.recipientUid == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
         && request.resource.data.readAt == request.time;
-      allow create, delete: if false;
+      allow create, delete: if can('orders.write') || can('shipments.write');
     }
 
     // --- Paramètres
     match /settings/public {
       // Nom, logo, WhatsApp officiel : nécessaires à la page de connexion.
       allow read: if true;
-      allow write: if false;
+      allow write: if can('settings.write') || isAdmin();
     }
     match /settings/{docId} {
       allow read: if docId != 'public' && (isAdmin() || isStaff());
-      allow write: if false;
+      allow write: if can('settings.write') || isAdmin();
     }
 
     // --- Journal d'audit
     match /auditLogs/{logId} {
       allow read: if can('audit.read');
-      allow write: if false;
+      allow create: if isAdmin() || isStaff();
+      allow update, delete: if false;
     }
 
-    // Compteurs, limitation de débit, file d'e-mails : serveur uniquement.
+    // --- Compteurs séquentiels (réservés au personnel autorisé)
+    match /counters/{counterId} {
+      allow read, write: if isAdmin() || isStaff();
+    }
+
+    // Autres collections internes : serveur uniquement.
     match /{document=**} {
       allow read, write: if false;
     }

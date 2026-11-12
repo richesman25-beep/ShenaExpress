@@ -17,7 +17,17 @@ import {
 import { doc, getDoc } from "firebase/firestore";
 import { getFirebaseAuth, getFirebaseDb, firebaseState } from "@/lib/firebase";
 import { api } from "@/lib/api";
-import { hasPermission, isBackOffice, type AuthClaims, type Permission, type Role, type UserDoc } from "@shared/index";
+import { directBackend } from "@/lib/directBackend";
+import {
+  hasPermission,
+  isBackOffice,
+  normalizeClientIdentifier,
+  CLIENT_ID_RE,
+  type AuthClaims,
+  type Permission,
+  type Role,
+  type UserDoc,
+} from "@shared/index";
 
 export interface AuthContextValue {
   user: User | null;
@@ -66,6 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore if Firestore rules or connectivity prevent reading users/{uid}
     }
+    const emailLower = u.email?.toLowerCase() ?? "";
+    if (emailLower.endsWith("@clients.shena-express.invalid")) {
+      const prefix = emailLower.split("@")[0]?.split(".")[0]?.toUpperCase() ?? "";
+      if (prefix) return { role: "client", clientId: prefix };
+    }
     return {};
   }, []);
 
@@ -109,7 +124,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
-      const { token } = await api.clientSignIn({ identifier: trimmed, password });
+      const id = normalizeClientIdentifier(trimmed);
+      if (!CLIENT_ID_RE.test(id)) {
+        throw new Error("Identifiant ou mot de passe incorrect.");
+      }
+      if (firebaseState.mode === "production") {
+        const authEmail = await directBackend.resolveClientAuthEmail(id);
+        const cred = await signInWithEmailAndPassword(auth, authEmail, password);
+        const c = await extractClaims(cred.user, true);
+        if (c.role !== "client") {
+          await fbSignOut(auth);
+          throw new Error("Identifiant ou mot de passe incorrect.");
+        }
+        return;
+      }
+      const { token } = await api.clientSignIn({ identifier: id, password });
       const cred = await signInWithCustomToken(auth, token);
       await extractClaims(cred.user, true);
     },

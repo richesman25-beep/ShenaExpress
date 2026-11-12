@@ -1,5 +1,5 @@
 /** Formats d'identifiants. Les numéros sont attribués côté serveur via un compteur transactionnel (ou saisis de façon unique) et ne sont jamais réutilisés. */
-export const CLIENT_ID_RE = /^(?:SHE-CLIENT-\d{3,}|SHENA-\d{3,}|SHE-[A-Z0-9]{2,}(?:-[A-Z0-9]{1,20})*)$/;
+export const CLIENT_ID_RE = /^(?:SHE-CLIENT-\d{1,}|SHENA-\d{1,}|SHE-[A-Z0-9]{1,}(?:-[A-Z0-9]{1,20})*)$/;
 export const ORDER_ID_RE = /^SHE-CMD-\d{4}-\d{5,}$/;
 export const SHIPMENT_ID_RE = /^SHE-COLIS-\d{4}-\d{5,}$/;
 
