@@ -342,7 +342,7 @@ describe("9 & 15. Chronologie, progression des 15 statuts et composants responsi
       </SettingsProvider>,
     );
 
-    expect(screen.getAllByText("En transit").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("En transit aérien vers la République dominicaine").length).toBeGreaterThan(0);
     expect(screen.getByRole("region", { name: /Progression/i })).toBeInTheDocument();
 
     const items = screen.getAllByRole("listitem");

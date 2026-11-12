@@ -10,8 +10,6 @@ import {
   Ban,
   CheckCircle2,
   Eye,
-  Trash2,
-  PackageCheck,
   Copy,
   RotateCcw,
   AlertCircle,
@@ -22,22 +20,20 @@ import { getFirebaseDb } from "@/lib/firebase";
 import { api, formatError } from "@/lib/api";
 import {
   STATUS_CODES,
-  CURRENCIES,
+  SHENA_PRIMARY_STATUSES,
   CLIENT_ACCESS_LABELS,
   getClientAccessState,
+  nextLogisticsStatus,
   todayIso,
-  formatIsoDate,
-  parseMoney,
-  formatMoney,
   type ClientDoc,
   type OrderDoc,
+  type ShipmentDoc,
   type StatusCode,
-  type TransportMode,
-  type Currency,
 } from "@shared/index";
 import {
   StatusBadge,
-  TransportBadge,
+  ShipmentProgress,
+  PickupAvailabilityBanner,
   Modal,
   ConfirmDialog,
   EmptyState,
@@ -64,7 +60,7 @@ function ClientAccessBadge({ client }: { client: Pick<ClientDoc, "status" | "pas
 
 export function AdminClientsPage() {
   const { can } = useAuth();
-  const { clients, orders } = useAdminData();
+  const { clients, orders, shipments } = useAdminData();
   const { notify } = useToast();
 
   const [search, setSearch] = useState("");
@@ -582,9 +578,31 @@ export function AdminClientsPage() {
               )}
             </form>
 
+            {/* Colis & expéditions associés au client */}
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-navy-900 uppercase">Colis &amp; suivi logistique</div>
+              {shipments.filter((s) => s.clientId === inspecting.clientId).length === 0 ? (
+                <p className="text-xs text-slate-500">Aucun colis enregistré pour ce client.</p>
+              ) : (
+                <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 px-3">
+                  {shipments
+                    .filter((s) => s.clientId === inspecting.clientId)
+                    .map((s) => (
+                      <li key={s.shipmentId} className="py-2.5 flex items-center justify-between gap-2 text-xs">
+                        <span>
+                          <strong className="text-navy-900">{s.trackingNumber}</strong>
+                          {s.lines[0]?.description ? ` • ${s.lines[0].description}` : ""}
+                        </span>
+                        <StatusBadge status={s.status} size="sm" />
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+
             {/* Historique des commandes du client */}
             <div className="space-y-2">
-              <div className="text-xs font-bold text-navy-900 uppercase">Historique des commandes</div>
+              <div className="text-xs font-bold text-navy-900 uppercase">Commandes associées</div>
               {orders.filter((o) => o.clientId === inspecting.clientId).length === 0 ? (
                 <p className="text-xs text-slate-500">Aucune commande enregistrée pour ce client.</p>
               ) : (
@@ -592,9 +610,11 @@ export function AdminClientsPage() {
                   {orders
                     .filter((o) => o.clientId === inspecting.clientId)
                     .map((o) => (
-                      <li key={o.orderId} className="py-2.5 flex items-center justify-between text-xs">
+                      <li key={o.orderId} className="py-2.5 flex items-center justify-between gap-2 text-xs">
                         <span>
-                          <strong>{o.orderId}</strong> • {formatIsoDate(o.orderDate)} ({o.stats.received}/{o.stats.ordered} reçu(s))
+                          <strong>{o.orderId}</strong>
+                          {o.merchantOrderRef ? ` (Réf. ${o.merchantOrderRef})` : ""}
+                          {o.items[0]?.description ? ` • ${o.items[0].description}` : ""}
                         </span>
                         <StatusBadge status={o.status} size="sm" />
                       </li>
@@ -906,39 +926,49 @@ export function AdminOrdersPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [transportFilter, setTransportFilter] = useState<string>("all");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<OrderDoc | null>(null);
-  const [receiving, setReceiving] = useState<OrderDoc | null>(null);
   const [inspecting, setInspecting] = useState<OrderDoc | null>(null);
 
   const canWrite = can("orders.write");
 
+  const shipmentByOrderId = useMemo(() => {
+    const map = new Map<string, ShipmentDoc>();
+    for (const s of shipments) {
+      for (const oid of s.orderIds) {
+        if (!map.has(oid)) map.set(oid, s);
+      }
+    }
+    return map;
+  }, [shipments]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return orders.filter((o) => {
-      if (statusFilter !== "all" && o.status !== statusFilter) return false;
-      if (transportFilter !== "all" && o.transportMode !== transportFilter) return false;
+      const linkedShip = shipmentByOrderId.get(o.orderId);
+      const effectiveStatus = linkedShip?.status ?? o.status;
+      if (statusFilter !== "all" && effectiveStatus !== statusFilter) return false;
       if (!q) return true;
       return (
         o.orderId.toLowerCase().includes(q) ||
         o.clientId.toLowerCase().includes(q) ||
         o.clientName.toLowerCase().includes(q) ||
-        (o.merchant ?? "").toLowerCase().includes(q) ||
+        (linkedShip?.trackingNumber ?? "").toLowerCase().includes(q) ||
         (o.merchantOrderRef ?? "").toLowerCase().includes(q) ||
+        o.items.some((i) => i.description.toLowerCase().includes(q)) ||
         o.searchTokens?.some((t) => t.includes(q))
       );
     });
-  }, [orders, search, statusFilter, transportFilter]);
+  }, [orders, shipmentByOrderId, search, statusFilter]);
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Gestion des commandes</h1>
+          <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Enregistrement &amp; suivi des commandes</h1>
           <p className="text-xs text-slate-600">
-            Créez des commandes, enregistrez explicitement les articles reçus et suivez leur expédition.
+            Enregistrez les commandes et colis avec leur numéro de suivi unique et pilotez les 3 étapes logistiques SHENA Express.
           </p>
         </div>
         {canWrite && (
@@ -948,14 +978,14 @@ export function AdminOrdersPage() {
             className="inline-flex items-center gap-2 rounded-xl bg-royal-600 px-4 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-royal-700"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
-            <span>Nouvelle commande</span>
+            <span>Nouvelle commande / colis</span>
           </button>
         )}
       </div>
 
       {/* Recherche et filtres */}
       <div className="grid gap-3 sm:grid-cols-12 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-        <div className="sm:col-span-6 relative">
+        <div className="sm:col-span-8 relative">
           <label htmlFor="admin-order-search" className="sr-only">
             Rechercher une commande
           </label>
@@ -963,15 +993,15 @@ export function AdminOrdersPage() {
           <input
             id="admin-order-search"
             type="search"
-            placeholder="Référence commande, client, vendeur ou numéro de suivi…"
+            placeholder="Rechercher par numéro de suivi, client, référence commande ou description…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-xl border border-slate-300 ps-10 pe-3 py-2 text-sm"
           />
         </div>
-        <div className="sm:col-span-3">
+        <div className="sm:col-span-4">
           <label htmlFor="admin-order-status" className="sr-only">
-            Statut
+            Statut logistique
           </label>
           <select
             id="admin-order-status"
@@ -979,92 +1009,72 @@ export function AdminOrdersPage() {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
           >
-            <option value="all">Tous les statuts</option>
-            {STATUS_CODES.map((c) => (
+            <option value="all">Toutes les étapes logistiques</option>
+            {SHENA_PRIMARY_STATUSES.map((c) => (
               <option key={c} value={c}>
                 {labelForStatus(c)}
               </option>
             ))}
           </select>
         </div>
-        <div className="sm:col-span-3">
-          <label htmlFor="admin-order-transport" className="sr-only">
-            Mode de transport
-          </label>
-          <select
-            id="admin-order-transport"
-            value={transportFilter}
-            onChange={(e) => setTransportFilter(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            <option value="all">Tous les modes</option>
-            <option value="air">Aérien</option>
-            <option value="sea">Maritime</option>
-          </select>
-        </div>
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState title="Aucune commande trouvée" description="Créez une commande pour un client existant." />
+        <EmptyState
+          title="Aucune commande trouvée"
+          description="Enregistrez une nouvelle commande avec son numéro de suivi unique pour un client existant."
+        />
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                  <th className="py-3 px-4">N° Commande</th>
-                  <th className="py-3 px-4">Client</th>
-                  <th className="py-3 px-4">Vendeur / Date</th>
-                  <th className="py-3 px-4">Cmd / Reçus / Exp.</th>
-                  <th className="py-3 px-4">Colis</th>
-                  <th className="py-3 px-4">Statut</th>
+                  <th className="py-3 px-4">Numéro de suivi</th>
+                  <th className="py-3 px-4">Client associé</th>
+                  <th className="py-3 px-4">Réf. &amp; Description</th>
+                  <th className="py-3 px-4">Statut logistique actuel</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map((o) => (
-                  <tr key={o.orderId} className="hover:bg-slate-50/80">
-                    <td className="py-3 px-4 font-extrabold text-navy-900">
-                      <div>{o.orderId}</div>
-                      <TransportBadge mode={o.transportMode} />
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-slate-900">{o.clientId}</div>
-                      <div className="text-xs text-slate-500">{o.clientName}</div>
-                    </td>
-                    <td className="py-3 px-4 text-xs text-slate-600">
-                      <div>{o.merchant ?? "—"}</div>
-                      <div>{formatIsoDate(o.orderDate)}</div>
-                    </td>
-                    <td className="py-3 px-4 text-xs font-bold">
-                      <span>{o.stats.ordered}</span> /{" "}
-                      <span className="text-sky-800">{o.stats.received}</span> /{" "}
-                      <span className="text-royal-700">{o.stats.shipped}</span>
-                    </td>
-                    <td className="py-3 px-4 text-xs font-bold">{o.shipmentIds.length}</td>
-                    <td className="py-3 px-4">
-                      <StatusBadge status={o.status} size="sm" />
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setInspecting(o)}
-                          aria-label={`Détail ${o.orderId}`}
-                          className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
-                        >
-                          <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                        {canWrite && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => setReceiving(o)}
-                              className="inline-flex items-center gap-1 rounded-lg bg-sky-50 border border-sky-200 px-2.5 py-1 text-xs font-bold text-sky-900 hover:bg-sky-100"
-                            >
-                              <PackageCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                              <span>Réception</span>
-                            </button>
+                {filtered.map((o) => {
+                  const linkedShip = shipmentByOrderId.get(o.orderId);
+                  const effectiveStatus = linkedShip?.status ?? o.status;
+                  return (
+                    <tr key={o.orderId} className="hover:bg-slate-50/80">
+                      <td className="py-3 px-4">
+                        <div className="font-extrabold text-navy-900">
+                          {linkedShip?.trackingNumber ?? o.orderId}
+                        </div>
+                        <div className="text-xs text-slate-500">{o.orderId}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900">{o.clientId}</div>
+                        <div className="text-xs text-slate-500">{o.clientName}</div>
+                      </td>
+                      <td className="py-3 px-4 text-xs text-slate-700">
+                        <div className="font-semibold text-slate-900">
+                          {o.items[0]?.description ?? "Colis SHENA Express"}
+                        </div>
+                        {o.merchantOrderRef && (
+                          <div className="text-slate-500">Réf. : {o.merchantOrderRef}</div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <StatusBadge status={effectiveStatus} size="sm" />
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setInspecting(o)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-blue-50 border border-blue-200 px-2.5 py-1 text-xs font-bold text-royal-700 hover:bg-blue-100"
+                          >
+                            <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Suivi &amp; statut</span>
+                          </button>
+                          {canWrite && (
                             <button
                               type="button"
                               onClick={() => setEditing(o)}
@@ -1073,12 +1083,12 @@ export function AdminOrdersPage() {
                             >
                               <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
                             </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1089,6 +1099,7 @@ export function AdminOrdersPage() {
         <OrderFormModal
           clients={clients}
           initial={editing}
+          linkedShipment={editing ? shipmentByOrderId.get(editing.orderId) ?? null : null}
           onClose={() => {
             setCreateOpen(false);
             setEditing(null);
@@ -1096,18 +1107,12 @@ export function AdminOrdersPage() {
           onSaved={(orderId) => {
             setCreateOpen(false);
             setEditing(null);
-            notify("success", orderId ? `Commande ${orderId} créée.` : "Commande mise à jour.");
-          }}
-        />
-      )}
-
-      {receiving && (
-        <RecordReceiptModal
-          order={receiving}
-          onClose={() => setReceiving(null)}
-          onSaved={() => {
-            setReceiving(null);
-            notify("success", "Quantités reçues mises à jour.");
+            notify(
+              "success",
+              orderId
+                ? `Commande ${orderId} et son colis ont été enregistrés avec succès.`
+                : "Commande mise à jour avec succès.",
+            );
           }}
         />
       )}
@@ -1127,34 +1132,27 @@ export function AdminOrdersPage() {
 function OrderFormModal({
   clients,
   initial,
+  linkedShipment,
   onClose,
   onSaved,
 }: {
   clients: ClientDoc[];
   initial: OrderDoc | null;
+  linkedShipment: ShipmentDoc | null;
   onClose: () => void;
   onSaved: (orderId?: string) => void;
 }) {
-  const { settings } = useSettings();
-  const [clientId, setClientId] = useState(initial?.clientId ?? clients.find((c) => c.status === "active")?.clientId ?? "");
-  const [merchant, setMerchant] = useState(initial?.merchant ?? "");
-  const [merchantOrderRef, setMerchantOrderRef] = useState(initial?.merchantOrderRef ?? "");
-  const [orderDate, setOrderDate] = useState(initial?.orderDate ?? todayIso());
-  const [currency, setCurrency] = useState<Currency>(initial?.currency ?? settings.currency);
-  const [transportMode, setTransportMode] = useState<string>(initial?.transportMode ?? "");
-  const [publicNote, setPublicNote] = useState(initial?.publicNote ?? "");
-  const [internalNotes, setInternalNotes] = useState("");
-  const [items, setItems] = useState<
-    { lineId?: string; description: string; merchantRef: string; quantityOrdered: number; declaredValueStr: string }[]
-  >(
-    initial?.items.map((i) => ({
-      lineId: i.lineId,
-      description: i.description,
-      merchantRef: i.merchantRef ?? "",
-      quantityOrdered: i.quantityOrdered,
-      declaredValueStr: i.declaredUnitValue ? (i.declaredUnitValue / 100).toFixed(2) : "",
-    })) ?? [{ description: "", merchantRef: "", quantityOrdered: 1, declaredValueStr: "" }],
+  const { labelForStatus } = useSettings();
+  const [clientId, setClientId] = useState(
+    initial?.clientId ?? clients.find((c) => c.status === "active")?.clientId ?? "",
   );
+  const [trackingNumber, setTrackingNumber] = useState(linkedShipment?.trackingNumber ?? "");
+  const [merchantOrderRef, setMerchantOrderRef] = useState(initial?.merchantOrderRef ?? "");
+  const [description, setDescription] = useState(initial?.items[0]?.description ?? "");
+  const [initialStatus, setInitialStatus] = useState<StatusCode>(
+    linkedShipment?.status ?? (initial && SHENA_PRIMARY_STATUSES.includes(initial.status) ? initial.status : "received"),
+  );
+  const [internalNotes, setInternalNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1170,38 +1168,52 @@ function OrderFormModal({
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    const cleanTracking = trackingNumber.trim().toUpperCase();
+    if (!initial && !cleanTracking) {
+      setError("Le numéro de suivi unique est obligatoire.");
+      return;
+    }
     setBusy(true);
     try {
-      const parsedItems = items.map((i) => ({
-        ...(i.lineId ? { lineId: i.lineId } : {}),
-        description: i.description,
-        merchantRef: i.merchantRef || null,
-        quantityOrdered: Number(i.quantityOrdered),
-        declaredUnitValue: i.declaredValueStr.trim() ? parseMoney(i.declaredValueStr) : null,
-      }));
+      const descText = description.trim() || `Colis ${cleanTracking || initial?.orderId || "SHENA"}`;
+      const parsedItems = [
+        {
+          lineId: initial?.items[0]?.lineId ?? "L1",
+          description: descText,
+          merchantRef: merchantOrderRef.trim() || null,
+          quantityOrdered: initial?.items[0]?.quantityOrdered ?? 1,
+          declaredUnitValue: initial?.items[0]?.declaredUnitValue ?? null,
+        },
+      ];
       if (initial) {
         await api.updateOrder({
           orderId: initial.orderId,
-          merchant: merchant || null,
-          merchantOrderRef: merchantOrderRef || null,
-          orderDate,
-          currency,
-          transportMode: (transportMode || null) as TransportMode | null,
-          publicNote: publicNote || null,
-          internalNotes: internalNotes || null,
+          trackingNumber: cleanTracking || null,
+          initialStatus,
+          description: descText,
+          merchant: initial.merchant ?? null,
+          merchantOrderRef: merchantOrderRef.trim() || null,
+          orderDate: initial.orderDate,
+          currency: initial.currency,
+          transportMode: initial.transportMode ?? "air",
+          publicNote: initial.publicNote ?? null,
+          internalNotes: internalNotes.trim() || null,
           items: parsedItems,
         });
         onSaved();
       } else {
         const res = await api.createOrder({
           clientId,
-          merchant: merchant || null,
-          merchantOrderRef: merchantOrderRef || null,
-          orderDate,
-          currency,
-          transportMode: (transportMode || null) as TransportMode | null,
-          publicNote: publicNote || null,
-          internalNotes: internalNotes || null,
+          trackingNumber: cleanTracking,
+          initialStatus,
+          description: descText,
+          merchant: null,
+          merchantOrderRef: merchantOrderRef.trim() || null,
+          orderDate: todayIso(),
+          currency: "USD",
+          transportMode: "air",
+          publicNote: null,
+          internalNotes: internalNotes.trim() || null,
           items: parsedItems,
         });
         onSaved(res.orderId);
@@ -1215,9 +1227,9 @@ function OrderFormModal({
 
   return (
     <Modal
-      title={initial ? `Modifier ${initial.orderId}` : "Créer une commande"}
+      title={initial ? `Modifier ${initial.orderId}` : "Enregistrer une commande / un colis"}
       onClose={onClose}
-      maxWidth="max-w-2xl"
+      maxWidth="max-w-xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
@@ -1226,203 +1238,100 @@ function OrderFormModal({
           </div>
         )}
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label htmlFor="of-client" className="block text-xs font-bold text-slate-700 mb-1">
-              Client *
-            </label>
-            <select
-              id="of-client"
-              required
-              disabled={Boolean(initial)}
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
-            >
-              <option value="">Sélectionner un client…</option>
-              {clients
-                .filter((c) => c.status === "active" || c.clientId === initial?.clientId)
-                .map((c) => (
-                  <option key={c.clientId} value={c.clientId}>
-                    {c.clientId} — {c.fullName}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="of-date" className="block text-xs font-bold text-slate-700 mb-1">
-              Date de commande *
-            </label>
-            <input
-              id="of-date"
-              type="date"
-              required
-              value={orderDate}
-              onChange={(e) => setOrderDate(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            />
-          </div>
+        <div>
+          <label htmlFor="of-client" className="block text-xs font-bold text-slate-700 mb-1">
+            Client associé *
+          </label>
+          <select
+            id="of-client"
+            required
+            disabled={Boolean(initial)}
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
+          >
+            <option value="">Sélectionner un client…</option>
+            {clients
+              .filter((c) => c.status === "active" || c.clientId === initial?.clientId)
+              .map((c) => (
+                <option key={c.clientId} value={c.clientId}>
+                  {c.clientId} — {c.fullName}
+                </option>
+              ))}
+          </select>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-4">
-          <div className="sm:col-span-2">
-            <label htmlFor="of-merchant" className="block text-xs font-bold text-slate-700 mb-1">
-              Site marchand / vendeur
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor="of-tracking" className="block text-xs font-bold text-slate-700 mb-1">
+              Numéro de suivi unique *
             </label>
             <input
-              id="of-merchant"
-              placeholder="Amazon, Shein, Walmart…"
-              value={merchant}
-              onChange={(e) => setMerchant(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              id="of-tracking"
+              required={!initial}
+              placeholder="Ex. SHX260001 ou 1Z999AA101"
+              value={trackingNumber}
+              onChange={(e) => setTrackingNumber(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase font-mono"
             />
           </div>
           <div>
             <label htmlFor="of-mref" className="block text-xs font-bold text-slate-700 mb-1">
-              Réf. vendeur
+              Référence de la commande (facultative)
             </label>
             <input
               id="of-mref"
+              placeholder="Ex. AMZ-114-009"
               value={merchantOrderRef}
               onChange={(e) => setMerchantOrderRef(e.target.value)}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
-          <div>
-            <label htmlFor="of-mode" className="block text-xs font-bold text-slate-700 mb-1">
-              Transport
-            </label>
-            <select
-              id="of-mode"
-              value={transportMode}
-              onChange={(e) => setTransportMode(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
-            >
-              <option value="">À préciser</option>
-              <option value="air">Aérien</option>
-              <option value="sea">Maritime</option>
-            </select>
-          </div>
         </div>
 
         <div>
-          <label htmlFor="of-currency" className="block text-xs font-bold text-slate-700 mb-1">
-            Devise de la commande
+          <label htmlFor="of-desc" className="block text-xs font-bold text-slate-700 mb-1">
+            Description courte du colis (facultative)
+          </label>
+          <input
+            id="of-desc"
+            placeholder="Ex. Vêtements, électronique, chaussures…"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="of-status" className="block text-xs font-bold text-slate-700 mb-1">
+            Statut logistique initial *
           </label>
           <select
-            id="of-currency"
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value as Currency)}
-            className="w-40 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold"
+            id="of-status"
+            value={initialStatus}
+            onChange={(e) => setInitialStatus(e.target.value as StatusCode)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-navy-900"
           >
-            {CURRENCIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
+            {SHENA_PRIMARY_STATUSES.map((code) => (
+              <option key={code} value={code}>
+                {labelForStatus(code)}
               </option>
             ))}
           </select>
         </div>
 
-        {/* Lignes d'articles */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-navy-900 uppercase">Lignes d&apos;articles *</span>
-            <button
-              type="button"
-              onClick={() =>
-                setItems((prev) => [
-                  ...prev,
-                  { description: "", merchantRef: "", quantityOrdered: 1, declaredValueStr: "" },
-                ])
-              }
-              className="text-xs font-bold text-royal-600 hover:underline"
-            >
-              + Ajouter un article
-            </button>
-          </div>
-          <div className="space-y-2">
-            {items.map((item, idx) => (
-              <div key={item.lineId ?? idx} className="grid gap-2 sm:grid-cols-12 items-center rounded-xl bg-slate-50 p-2.5">
-                <input
-                  required
-                  placeholder="Description de l'article *"
-                  value={item.description}
-                  onChange={(e) =>
-                    setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))
-                  }
-                  className="sm:col-span-5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs"
-                />
-                <input
-                  placeholder="Réf."
-                  value={item.merchantRef}
-                  onChange={(e) =>
-                    setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, merchantRef: e.target.value } : x)))
-                  }
-                  className="sm:col-span-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs"
-                />
-                <input
-                  type="number"
-                  min={1}
-                  required
-                  aria-label="Quantité commandée"
-                  value={item.quantityOrdered}
-                  onChange={(e) =>
-                    setItems((prev) =>
-                      prev.map((x, i) => (i === idx ? { ...x, quantityOrdered: Number(e.target.value) } : x)),
-                    )
-                  }
-                  className="sm:col-span-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs"
-                />
-                <input
-                  placeholder={`Valeur (${currency})`}
-                  value={item.declaredValueStr}
-                  onChange={(e) =>
-                    setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, declaredValueStr: e.target.value } : x)))
-                  }
-                  className="sm:col-span-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs"
-                />
-                <div className="sm:col-span-1 flex justify-end">
-                  {items.length > 1 && (
-                    <button
-                      type="button"
-                      aria-label="Supprimer la ligne"
-                      onClick={() => setItems((prev) => prev.filter((_, i) => i !== idx))}
-                      className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50"
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label htmlFor="of-pubnote" className="block text-xs font-bold text-slate-700 mb-1">
-              Note publique (visible par le client)
-            </label>
-            <textarea
-              id="of-pubnote"
-              rows={2}
-              value={publicNote}
-              onChange={(e) => setPublicNote(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
-            />
-          </div>
-          <div>
-            <label htmlFor="of-privnote" className="block text-xs font-bold text-slate-700 mb-1">
-              Notes internes privées (administration uniquement)
-            </label>
-            <textarea
-              id="of-privnote"
-              rows={2}
-              value={internalNotes}
-              onChange={(e) => setInternalNotes(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
-            />
-          </div>
+        <div>
+          <label htmlFor="of-privnote" className="block text-xs font-bold text-slate-700 mb-1">
+            Notes internes (facultatives — réservées à l&apos;administrateur)
+          </label>
+          <textarea
+            id="of-privnote"
+            rows={2}
+            value={internalNotes}
+            onChange={(e) => setInternalNotes(e.target.value)}
+            placeholder="Instructions internes invisibles pour le client…"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
+          />
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
@@ -1438,112 +1347,7 @@ function OrderFormModal({
             disabled={busy}
             className="rounded-xl bg-royal-600 px-4 py-2 text-xs font-bold text-white hover:bg-royal-700 disabled:opacity-60"
           >
-            {busy ? "Enregistrement…" : initial ? "Enregistrer" : "Créer la commande"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function RecordReceiptModal({
-  order,
-  onClose,
-  onSaved,
-}: {
-  order: OrderDoc;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [quantities, setQuantities] = useState<Record<string, number>>(() =>
-    Object.fromEntries(order.items.map((i) => [i.lineId, i.quantityReceived])),
-  );
-  const [publicNote, setPublicNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      await api.recordReceipt({
-        orderId: order.orderId,
-        lines: order.items.map((i) => ({
-          lineId: i.lineId,
-          quantityReceived: Number(quantities[i.lineId] ?? 0),
-        })),
-        publicNote: publicNote || null,
-      });
-      onSaved();
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title={`Réception à l'entrepôt — ${order.orderId}`} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error && (
-          <div role="alert" className="rounded-xl bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-900">
-            {error}
-          </div>
-        )}
-        <p className="text-xs text-slate-600">
-          Saisissez le nombre cumulé d&apos;articles effectivement reçus à l&apos;entrepôt pour chaque ligne.
-        </p>
-        <div className="space-y-2">
-          {order.items.map((item) => (
-            <div key={item.lineId} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3 text-xs">
-              <div>
-                <div className="font-bold text-navy-900">{item.description}</div>
-                <div className="text-slate-500">Commandé : {item.quantityOrdered}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <label htmlFor={`rec-${item.lineId}`} className="text-slate-600">
-                  Reçu :
-                </label>
-                <input
-                  id={`rec-${item.lineId}`}
-                  type="number"
-                  min={0}
-                  max={item.quantityOrdered}
-                  value={quantities[item.lineId] ?? 0}
-                  onChange={(e) => setQuantities((p) => ({ ...p, [item.lineId]: Number(e.target.value) }))}
-                  className="w-20 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-bold text-right"
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-        <div>
-          <label htmlFor="rec-note" className="block text-xs font-bold text-slate-700 mb-1">
-            Note publique optionnelle
-          </label>
-          <input
-            id="rec-note"
-            value={publicNote}
-            onChange={(e) => setPublicNote(e.target.value)}
-            placeholder="Ex. Articles vérifiés et en bon état."
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
-          />
-        </div>
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-bold text-slate-700"
-          >
-            Annuler
-          </button>
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-xl bg-royal-600 px-4 py-2 text-xs font-bold text-white hover:bg-royal-700"
-          >
-            {busy ? "Enregistrement…" : "Valider la réception"}
+            {busy ? "Enregistrement…" : initial ? "Enregistrer" : "Enregistrer la commande"}
           </button>
         </div>
       </form>
@@ -1558,32 +1362,49 @@ function OrderInspectModal({
   onClose,
 }: {
   order: OrderDoc;
-  shipments: { shipmentId: string; trackingNumber: string; status: StatusCode; itemCount: number }[];
+  shipments: { shipmentId: string; trackingNumber: string; status: StatusCode; itemCount: number; lastStep?: number }[];
   events: Parameters<typeof TrackingTimeline>[0]["events"];
   onClose: () => void;
 }) {
   const { can } = useAuth();
   const { labelForStatus } = useSettings();
   const { notify } = useToast();
-  const [status, setStatus] = useState<StatusCode>(order.status);
+  const primaryShipment = shipments[0];
+  const currentStatus = primaryShipment?.status ?? order.status;
+  const [status, setStatus] = useState<StatusCode>(currentStatus);
   const [publicNote, setPublicNote] = useState("");
   const [internalNote, setInternalNote] = useState("");
+  const [confirmNextStatus, setConfirmNextStatus] = useState<StatusCode | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const handleUpdateStatus = async (e: FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    setStatus(currentStatus);
+  }, [currentStatus]);
+
+  const executeStatusChange = async (targetStatus: StatusCode) => {
     setBusy(true);
     try {
-      await api.updateStatus({
-        targetType: "order",
-        targetId: order.orderId,
-        status,
-        publicNote: publicNote || null,
-        internalNote: internalNote || null,
-      });
-      notify("success", "Statut de la commande mis à jour.");
+      if (primaryShipment) {
+        await api.updateStatus({
+          targetType: "shipment",
+          targetId: primaryShipment.shipmentId,
+          status: targetStatus,
+          publicNote: publicNote || null,
+          internalNote: internalNote || null,
+        });
+      } else {
+        await api.updateStatus({
+          targetType: "order",
+          targetId: order.orderId,
+          status: targetStatus,
+          publicNote: publicNote || null,
+          internalNote: internalNote || null,
+        });
+      }
+      notify("success", `Statut mis à jour : ${labelForStatus(targetStatus)}.`);
       setPublicNote("");
       setInternalNote("");
+      setConfirmNextStatus(null);
     } catch (err) {
       notify("error", formatError(err));
     } finally {
@@ -1591,72 +1412,77 @@ function OrderInspectModal({
     }
   };
 
+  const nextStep = nextLogisticsStatus(currentStatus);
+
   return (
-    <Modal title={`Détail commande ${order.orderId}`} onClose={onClose} maxWidth="max-w-2xl">
+    <Modal title={`Suivi commande ${order.orderId}`} onClose={onClose} maxWidth="max-w-2xl">
       <div className="space-y-5">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-xl bg-slate-50 p-3 text-xs">
+        <div className="grid sm:grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-xs">
           <div>
-            <span className="text-slate-500">Commandés :</span> <strong>{order.stats.ordered}</strong>
+            <span className="text-slate-500 block">Client associé :</span>
+            <strong className="text-navy-900">
+              {order.clientId} — {order.clientName}
+            </strong>
           </div>
           <div>
-            <span className="text-slate-500">Reçus :</span> <strong>{order.stats.received}</strong>
+            <span className="text-slate-500 block">Numéro de suivi :</span>
+            <strong className="text-navy-900 font-mono">
+              {primaryShipment?.trackingNumber ?? order.orderId}
+            </strong>
           </div>
           <div>
-            <span className="text-slate-500">Emballés :</span> <strong>{order.stats.packed}</strong>
-          </div>
-          <div>
-            <span className="text-slate-500">Expédiés :</span> <strong>{order.stats.shipped}</strong>
+            <span className="text-slate-500 block">Référence / Description :</span>
+            <strong className="text-navy-900">
+              {order.items[0]?.description ?? "Colis"}
+              {order.merchantOrderRef ? ` (${order.merchantOrderRef})` : ""}
+            </strong>
           </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="text-xs font-bold text-navy-900 uppercase">Articles</div>
-          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 px-3 text-xs">
-            {order.items.map((i) => (
-              <li key={i.lineId} className="py-2 flex items-center justify-between">
-                <span>
-                  <strong>{i.description}</strong> {i.merchantRef ? `(${i.merchantRef})` : ""}
-                  {i.declaredUnitValue ? ` — Val. décl. ${formatMoney(i.declaredUnitValue, order.currency)}` : ""}
-                </span>
-                <span>
-                  Reçus : <strong>{i.quantityReceived}</strong> / {i.quantityOrdered}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="space-y-2">
-          <div className="text-xs font-bold text-navy-900 uppercase">Colis associés ({shipments.length})</div>
-          {shipments.length === 0 ? (
-            <p className="text-xs text-slate-500">Aucun colis associé.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 px-3 text-xs">
-              {shipments.map((s) => (
-                <li key={s.shipmentId} className="py-2 flex items-center justify-between">
-                  <span>
-                    <strong>{s.trackingNumber}</strong> ({s.shipmentId}) — {s.itemCount} article(s)
-                  </span>
-                  <StatusBadge status={s.status} size="sm" />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <PickupAvailabilityBanner status={currentStatus} />
+        <ShipmentProgress status={currentStatus} lastStep={primaryShipment?.lastStep} />
 
         {can("orders.write") && (
-          <form onSubmit={handleUpdateStatus} className="rounded-xl border border-slate-200 p-4 space-y-3">
-            <div className="text-xs font-bold text-navy-900 uppercase">Changer le statut de la commande</div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setConfirmNextStatus(status);
+            }}
+            className="rounded-xl border border-slate-200 p-4 space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-navy-900 uppercase">
+                Mettre à jour le statut logistique
+              </div>
+              {nextStep && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmNextStatus(nextStep)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-orange-500 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-orange-600"
+                >
+                  <span>Passer à : {labelForStatus(nextStep)}</span>
+                </button>
+              )}
+            </div>
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as StatusCode)}
               className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold"
             >
-              {STATUS_CODES.map((c) => (
-                <option key={c} value={c}>
-                  {labelForStatus(c)}
-                </option>
-              ))}
+              <optgroup label="Étapes principales SHENA Express">
+                {SHENA_PRIMARY_STATUSES.map((c) => (
+                  <option key={c} value={c}>
+                    {labelForStatus(c)}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Autres statuts administratifs">
+                {STATUS_CODES.filter((c) => !SHENA_PRIMARY_STATUSES.includes(c)).map((c) => (
+                  <option key={c} value={c}>
+                    {labelForStatus(c)}
+                  </option>
+                ))}
+              </optgroup>
             </select>
             <div className="grid gap-2 sm:grid-cols-2">
               <input
@@ -1676,7 +1502,7 @@ function OrderInspectModal({
               <button
                 type="submit"
                 disabled={busy}
-                className="rounded-xl bg-royal-600 px-3.5 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-royal-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-royal-700"
               >
                 {busy ? "Mise à jour…" : "Enregistrer le statut"}
               </button>
@@ -1688,6 +1514,22 @@ function OrderInspectModal({
           <div className="text-xs font-bold text-navy-900 uppercase">Chronologie</div>
           <TrackingTimeline events={events} />
         </div>
+
+        <ConfirmDialog
+          open={Boolean(confirmNextStatus)}
+          title="Confirmer le changement de statut ?"
+          description={
+            confirmNextStatus
+              ? `Le colis ${primaryShipment?.trackingNumber ?? order.orderId} du client ${order.clientId} passera au statut « ${labelForStatus(confirmNextStatus)} ».`
+              : ""
+          }
+          confirmLabel="Confirmer et enregistrer"
+          busy={busy}
+          onCancel={() => setConfirmNextStatus(null)}
+          onConfirm={() => {
+            if (confirmNextStatus) void executeStatusChange(confirmNextStatus);
+          }}
+        />
       </div>
     </Modal>
   );

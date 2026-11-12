@@ -597,26 +597,119 @@ export const directBackend = {
       if (!clientSnap.exists()) throw new Error("Client introuvable.");
       const client = clientSnap.data() as ClientDoc;
 
+      if (input.trackingNumber) {
+        const dupTracking = await getDocs(
+          query(collection(db, "shipments"), where("trackingNumber", "==", input.trackingNumber)),
+        );
+        if (!dupTracking.empty) {
+          throw new Error("Ce numéro de suivi est déjà utilisé par un autre colis.");
+        }
+      }
+
       const year = new Date().getUTCFullYear();
-      const orderId = await runTransaction(db, async (tx) => {
+      const { orderId, shipmentId } = await runTransaction(db, async (tx) => {
         const counterRef = doc(db, "counters", `orders_${year}`);
         const snap = await tx.get(counterRef);
         const next = ((snap.data()?.value as number | undefined) ?? 0) + 1;
         tx.set(counterRef, { value: next, updatedAt: serverTimestamp() }, { merge: true });
-        return formatOrderId(year, next);
+        let createdShipmentId: string | null = null;
+        if (input.trackingNumber) {
+          const shipCounterRef = doc(db, "counters", `shipments_${year}`);
+          const shipSnap = await tx.get(shipCounterRef);
+          const nextShip = ((shipSnap.data()?.value as number | undefined) ?? 0) + 1;
+          tx.set(shipCounterRef, { value: nextShip, updatedAt: serverTimestamp() }, { merge: true });
+          createdShipmentId = formatShipmentId(year, nextShip);
+        }
+        return { orderId: formatOrderId(year, next), shipmentId: createdShipmentId };
       });
 
-      const items: OrderItem[] = input.items.map((it, idx) => ({
+      const rawItems =
+        input.items.length > 0
+          ? input.items
+          : [
+              {
+                lineId: "L1",
+                description: input.description ?? `Colis ${input.trackingNumber ?? orderId}`,
+                merchantRef: input.merchantOrderRef ?? null,
+                quantityOrdered: 1,
+                declaredUnitValue: null,
+              },
+            ];
+
+      const initialStatus: StatusCode = input.initialStatus ?? (input.trackingNumber ? "received" : "registered");
+      const items: OrderItem[] = rawItems.map((it, idx) => ({
         lineId: it.lineId ?? `L${idx + 1}`,
         description: it.description,
         merchantRef: it.merchantRef ?? null,
         quantityOrdered: it.quantityOrdered,
-        quantityReceived: 0,
+        quantityReceived: input.trackingNumber ? it.quantityOrdered : 0,
         declaredUnitValue: it.declaredUnitValue ?? null,
       }));
-      const stats = computeOrderStats(orderId, items, []);
+
       const now = serverTimestamp();
       const batch = writeBatch(db);
+      const linkedShipments: ShipmentDoc[] = [];
+
+      if (input.trackingNumber && shipmentId) {
+        const lines: ShipmentLine[] = items.map((it) => ({
+          orderId,
+          lineId: it.lineId,
+          description: it.description,
+          quantity: it.quantityOrdered,
+        }));
+        const newShipment: ShipmentDoc = {
+          shipmentId,
+          trackingNumber: input.trackingNumber,
+          clientId: client.clientId,
+          clientUid: client.clientUid,
+          orderIds: [orderId],
+          lines,
+          itemCount: lines.reduce((s, l) => s + l.quantity, 0),
+          weightKg: null,
+          dimensionsCm: null,
+          transportMode: input.transportMode ?? "air",
+          status: initialStatus,
+          lastStep: progressStep(initialStatus) ?? 1,
+          dates: {
+            warehouseReceivedAt: null,
+            estimatedDeparture: null,
+            shippedAt: null,
+            estimatedArrival: null,
+            deliveryWindowStart: null,
+            deliveryWindowEnd: null,
+            availableAt: null,
+            deliveredAt: null,
+          },
+          dateChangeMessage: null,
+          pickupInstructions: input.publicNote ?? null,
+          createdAt: { toMillis: () => Date.now(), toDate: () => new Date() },
+          updatedAt: { toMillis: () => Date.now(), toDate: () => new Date() },
+        };
+        linkedShipments.push(newShipment);
+        batch.set(doc(db, "shipments", shipmentId), { ...newShipment, createdAt: now, updatedAt: now });
+        batch.set(doc(db, "shipmentPrivate", shipmentId), {
+          shipmentId,
+          internalNotes: input.internalNotes ?? "",
+          updatedAt: now,
+          updatedBy: actor.uid,
+        });
+        batch.set(doc(collection(db, "shipmentEvents")), {
+          kind: "created",
+          targetType: "shipment",
+          orderId,
+          shipmentId,
+          clientUid: client.clientUid,
+          fromStatus: null,
+          toStatus: initialStatus,
+          publicNote: input.publicNote ?? `Colis ${input.trackingNumber} enregistré.`,
+          dateChanges: null,
+          actorUid: actor.uid,
+          actorRole: "admin",
+          at: now,
+        });
+      }
+
+      const stats = computeOrderStats(orderId, items, linkedShipments);
       batch.set(doc(db, "orders", orderId), {
         orderId,
         clientId: client.clientId,
@@ -627,14 +720,15 @@ export const directBackend = {
         orderDate: input.orderDate,
         items,
         currency: input.currency,
-        status: "registered",
-        transportMode: input.transportMode,
+        status: initialStatus,
+        transportMode: input.transportMode ?? (input.trackingNumber ? "air" : null),
         stats,
-        shipmentIds: [],
+        shipmentIds: shipmentId ? [shipmentId] : [],
         searchTokens: buildSearchTokens(
           orderId,
           client.clientId,
           client.fullName,
+          input.trackingNumber,
           input.merchant,
           input.merchantOrderRef,
           ...items.map((i) => i.description),
@@ -665,10 +759,10 @@ export const directBackend = {
         kind: "created",
         targetType: "order",
         orderId,
-        shipmentId: null,
+        shipmentId: shipmentId ?? null,
         clientUid: client.clientUid,
         fromStatus: null,
-        toStatus: "registered",
+        toStatus: initialStatus,
         publicNote: input.publicNote ?? "Commande enregistrée.",
         dateChanges: null,
         actorUid: actor.uid,
@@ -699,8 +793,33 @@ export const directBackend = {
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Commande introuvable.");
       const existing = snap.data() as OrderDoc;
+
+      if (input.trackingNumber && existing.shipmentIds.length > 0) {
+        const dupTracking = await getDocs(
+          query(collection(db, "shipments"), where("trackingNumber", "==", input.trackingNumber)),
+        );
+        for (const d of dupTracking.docs) {
+          if (d.id !== existing.shipmentIds[0]) {
+            throw new Error("Ce numéro de suivi est déjà utilisé par un autre colis.");
+          }
+        }
+      }
+
+      const rawItems =
+        input.items.length > 0
+          ? input.items
+          : [
+              {
+                lineId: existing.items[0]?.lineId ?? "L1",
+                description: input.description ?? existing.items[0]?.description ?? `Colis ${input.trackingNumber ?? input.orderId}`,
+                merchantRef: input.merchantOrderRef ?? existing.merchantOrderRef ?? null,
+                quantityOrdered: existing.items[0]?.quantityOrdered ?? 1,
+                declaredUnitValue: existing.items[0]?.declaredUnitValue ?? null,
+              },
+            ];
+
       const prevById = new Map(existing.items.map((i) => [i.lineId, i]));
-      const items: OrderItem[] = input.items.map((it, idx) => {
+      const items: OrderItem[] = rawItems.map((it, idx) => {
         const lineId = it.lineId ?? `L${idx + 1}`;
         const prev = prevById.get(lineId);
         return {
@@ -708,23 +827,53 @@ export const directBackend = {
           description: it.description,
           merchantRef: it.merchantRef ?? null,
           quantityOrdered: it.quantityOrdered,
-          quantityReceived: Math.min(prev?.quantityReceived ?? 0, it.quantityOrdered),
+          quantityReceived: Math.min(prev?.quantityReceived ?? (existing.shipmentIds.length > 0 ? it.quantityOrdered : 0), it.quantityOrdered),
           declaredUnitValue: it.declaredUnitValue ?? null,
         };
       });
       const stats = computeOrderStats(input.orderId, items, []);
       const batch = writeBatch(db);
+      const nextStatus = input.initialStatus ?? existing.status;
       batch.update(ref, {
         merchant: input.merchant,
         merchantOrderRef: input.merchantOrderRef,
         orderDate: input.orderDate,
         currency: input.currency,
-        transportMode: input.transportMode,
+        transportMode: input.transportMode ?? existing.transportMode,
         publicNote: input.publicNote,
+        status: nextStatus,
         items,
         stats,
+        searchTokens: buildSearchTokens(
+          input.orderId,
+          existing.clientId,
+          existing.clientName,
+          input.trackingNumber,
+          input.merchant,
+          input.merchantOrderRef,
+          ...items.map((i) => i.description),
+        ),
         updatedAt: serverTimestamp(),
       });
+      if (existing.shipmentIds[0]) {
+        const shipId = existing.shipmentIds[0];
+        batch.update(doc(db, "shipments", shipId), {
+          ...(input.trackingNumber ? { trackingNumber: input.trackingNumber } : {}),
+          ...(input.initialStatus
+            ? {
+                status: input.initialStatus,
+                lastStep: progressStep(input.initialStatus) ?? 1,
+              }
+            : {}),
+          lines: items.map((it) => ({
+            orderId: input.orderId,
+            lineId: it.lineId,
+            description: it.description,
+            quantity: it.quantityOrdered,
+          })),
+          updatedAt: serverTimestamp(),
+        });
+      }
       batch.set(doc(db, "orderPrivate", input.orderId), {
         orderId: input.orderId,
         internalNotes: input.internalNotes ?? "",
@@ -794,6 +943,15 @@ export const directBackend = {
       if (!clientSnap.exists()) throw new Error("Client introuvable.");
       const client = clientSnap.data() as ClientDoc;
 
+      if (input.trackingNumber) {
+        const dupTracking = await getDocs(
+          query(collection(db, "shipments"), where("trackingNumber", "==", input.trackingNumber)),
+        );
+        if (!dupTracking.empty) {
+          throw new Error("Ce numéro de suivi est déjà utilisé par un autre colis.");
+        }
+      }
+
       const ordersSnap = await getDocs(
         query(collection(db, "orders"), where("clientId", "==", input.clientId)),
       );
@@ -815,12 +973,14 @@ export const directBackend = {
         return { orderId: l.orderId, lineId: l.lineId, description: item.description, quantity: l.quantity };
       });
 
-      const issues = validateAllocation({
-        newLines: lines,
-        orders: orderItemsRecord,
-        otherShipments,
-      });
-      if (issues.length) throw new Error(issues[0]!.message);
+      if (lines.length > 0) {
+        const issues = validateAllocation({
+          newLines: lines,
+          orders: orderItemsRecord,
+          otherShipments,
+        });
+        if (issues.length) throw new Error(issues[0]!.message);
+      }
 
       const year = new Date().getUTCFullYear();
       const { shipmentId, seq } = await runTransaction(db, async (tx) => {
@@ -832,9 +992,23 @@ export const directBackend = {
       });
 
       const trackingNumber = input.trackingNumber || defaultTrackingNumber(year, seq);
+      const finalLines: ShipmentLine[] =
+        lines.length > 0
+          ? lines
+          : input.description || input.orderRef
+            ? [
+                {
+                  orderId: input.orderRef ?? shipmentId,
+                  lineId: "L1",
+                  description: input.description ?? `Colis ${trackingNumber}`,
+                  quantity: 1,
+                },
+              ]
+            : [];
       const orderIds = [...new Set(lines.map((l) => l.orderId))];
-      const itemCount = lines.reduce((sum, l) => sum + l.quantity, 0);
-      const status: StatusCode = input.dates.warehouseReceivedAt ? "received" : "preparing";
+      const itemCount = finalLines.length > 0 ? finalLines.reduce((sum, l) => sum + l.quantity, 0) : 1;
+      const status: StatusCode =
+        input.initialStatus ?? (input.dates.warehouseReceivedAt || lines.length === 0 ? "received" : "preparing");
 
       const newShipment: ShipmentDoc = {
         shipmentId,
@@ -842,7 +1016,7 @@ export const directBackend = {
         clientId: client.clientId,
         clientUid: client.clientUid,
         orderIds,
-        lines,
+        lines: finalLines,
         itemCount,
         weightKg: input.weightKg,
         dimensionsCm: input.dimensionsCm,
@@ -911,7 +1085,31 @@ export const directBackend = {
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Colis introuvable.");
       const current = snap.data() as ShipmentDoc;
+
+      if (input.trackingNumber && input.trackingNumber !== current.trackingNumber) {
+        const dupTracking = await getDocs(
+          query(collection(db, "shipments"), where("trackingNumber", "==", input.trackingNumber)),
+        );
+        for (const d of dupTracking.docs) {
+          if (d.id !== input.shipmentId) {
+            throw new Error("Ce numéro de suivi est déjà utilisé par un autre colis.");
+          }
+        }
+      }
+
       const changes = diffDates(current.dates, input.dates);
+      const nextStatus = input.initialStatus ?? current.status;
+      const nextLines =
+        input.description !== undefined && input.description !== null
+          ? [
+              {
+                orderId: input.orderRef ?? current.lines[0]?.orderId ?? current.shipmentId,
+                lineId: current.lines[0]?.lineId ?? "L1",
+                description: input.description,
+                quantity: current.lines[0]?.quantity ?? 1,
+              },
+            ]
+          : current.lines;
 
       const batch = writeBatch(db);
       const now = serverTimestamp();
@@ -920,6 +1118,9 @@ export const directBackend = {
         transportMode: input.transportMode,
         weightKg: input.weightKg,
         dimensionsCm: input.dimensionsCm,
+        lines: nextLines,
+        status: nextStatus,
+        lastStep: progressStep(nextStatus, current.lastStep) ?? current.lastStep ?? 1,
         dates: input.dates,
         dateChangeMessage: input.dateChangeMessage,
         pickupInstructions: input.pickupInstructions,
@@ -961,7 +1162,13 @@ export const directBackend = {
       const ref = doc(db, col, input.targetId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Élément introuvable.");
-      const data = snap.data() as { status: StatusCode; clientUid: string; lastStep?: number; orderIds?: string[] };
+      const data = snap.data() as {
+        status: StatusCode;
+        clientUid: string;
+        lastStep?: number;
+        orderIds?: string[];
+        shipmentIds?: string[];
+      };
       const step = progressStep(input.status, data.lastStep ?? 1) ?? data.lastStep ?? 1;
 
       const batch = writeBatch(db);
@@ -971,11 +1178,36 @@ export const directBackend = {
         ...(input.targetType === "shipment" ? { lastStep: step } : {}),
         updatedAt: now,
       });
+
+      // Synchronise le statut entre la commande et son colis associé lorsque liés
+      if (input.targetType === "shipment" && data.orderIds?.length) {
+        for (const oid of data.orderIds) {
+          const ordSnap = await getDoc(doc(db, "orders", oid));
+          if (ordSnap.exists()) {
+            batch.update(doc(db, "orders", oid), {
+              status: input.status,
+              updatedAt: now,
+            });
+          }
+        }
+      } else if (input.targetType === "order" && data.shipmentIds?.length) {
+        for (const sid of data.shipmentIds) {
+          const shipSnap = await getDoc(doc(db, "shipments", sid));
+          if (shipSnap.exists()) {
+            batch.update(doc(db, "shipments", sid), {
+              status: input.status,
+              lastStep: step,
+              updatedAt: now,
+            });
+          }
+        }
+      }
+
       batch.set(doc(collection(db, "shipmentEvents")), {
         kind: "status",
         targetType: input.targetType,
         orderId: input.targetType === "order" ? input.targetId : (data.orderIds?.[0] ?? null),
-        shipmentId: input.targetType === "shipment" ? input.targetId : null,
+        shipmentId: input.targetType === "shipment" ? input.targetId : (data.shipmentIds?.[0] ?? null),
         clientUid: data.clientUid,
         fromStatus: data.status,
         toStatus: input.status,

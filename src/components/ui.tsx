@@ -22,17 +22,17 @@ import {
 } from "lucide-react";
 import {
   STATUS_DEFINITIONS,
-  PROGRESS_STEPS,
-  progressStep,
-  DATE_FIELD_LABELS,
-  formatIsoDate,
+  SHENA_LOGISTICS_STEPS,
+  shenaStepNumber,
+  isAvailableForPickup,
+  statusDescription,
+  statusLocation,
   buildWhatsappMessage,
   buildWhatsappUrl,
   type StatusCode,
   type StatusTone,
   type TrackingEventDoc,
   type TransportMode,
-  type ShipmentDates,
 } from "@shared/index";
 import { useSettings } from "@/contexts/SettingsContext";
 
@@ -47,10 +47,11 @@ export function ShenaLogo({
   size?: "sm" | "md" | "lg";
 }) {
   const { settings } = useSettings();
-  const textColor = variant === "light" ? "text-white" : "text-navy-900";
-  const subColor = variant === "light" ? "text-amber-300" : "text-gold-600";
-  const boxSize = size === "sm" ? "h-8 w-8" : size === "lg" ? "h-12 w-12" : "h-10 w-10";
-  const titleSize = size === "sm" ? "text-base" : size === "lg" ? "text-2xl" : "text-lg";
+  const shenaColor = variant === "light" ? "text-white" : "text-navy-900";
+  const boxSize =
+    size === "sm" ? "h-9 w-9 sm:h-10 sm:w-10" : size === "lg" ? "h-14 w-14 sm:h-16 sm:w-16" : "h-11 w-11 sm:h-12 sm:w-12";
+  const titleSize =
+    size === "sm" ? "text-base sm:text-lg" : size === "lg" ? "text-2xl sm:text-3xl" : "text-lg sm:text-xl";
 
   return (
     <div className="inline-flex items-center gap-3 select-none">
@@ -62,23 +63,74 @@ export function ShenaLogo({
         />
       ) : (
         <svg
-          viewBox="0 0 64 64"
+          viewBox="0 0 128 128"
           role="img"
           aria-label="Logo SHENA Express"
-          className={`${boxSize} shrink-0 rounded-xl shadow-sm`}
+          className={`${boxSize} shrink-0 rounded-2xl shadow-md ring-1 ring-white/15`}
         >
-          <rect width="64" height="64" rx="14" fill="#0f2342" />
-          <path d="M11 22h25l8 10-8 10H11l7-10-7-10z" fill="#1d4ed8" />
-          <path d="M25 17h17l10 15-10 15H25l9-15-9-15z" fill="#d4a017" />
-          <circle cx="49" cy="32" r="3" fill="#ffffff" />
+          <defs>
+            <linearGradient id="shenaBgNavy" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#0b192e" />
+              <stop offset="100%" stopColor="#152c4e" />
+            </linearGradient>
+            <linearGradient id="shenaSilverS" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#ffffff" />
+              <stop offset="30%" stopColor="#cbd5e1" />
+              <stop offset="55%" stopColor="#64748b" />
+              <stop offset="80%" stopColor="#f1f5f9" />
+              <stop offset="100%" stopColor="#94a3b8" />
+            </linearGradient>
+            <linearGradient id="shenaOrangeArc" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#c2410c" />
+              <stop offset="45%" stopColor="#f97316" />
+              <stop offset="100%" stopColor="#fbbf24" />
+            </linearGradient>
+          </defs>
+          <rect width="128" height="128" rx="26" fill="url(#shenaBgNavy)" />
+          <path
+            d="M83 28C63 24 41 31 38 47c-2 11 8 17 24 21 13 3 18 6 17 12-2 8-13 12-28 10-8-1-16-4-22-8l-7 15c8 6 19 9 32 10 24 2 43-8 46-25 3-13-6-21-24-25-13-3-18-6-17-12 1-6 10-9 22-8 6 1 12 3 17 6l5-15z"
+            fill="#060f1d"
+            transform="translate(3, 4)"
+            opacity="0.65"
+          />
+          <path
+            d="M83 28C63 24 41 31 38 47c-2 11 8 17 24 21 13 3 18 6 17 12-2 8-13 12-28 10-8-1-16-4-22-8l-7 15c8 6 19 9 32 10 24 2 43-8 46-25 3-13-6-21-24-25-13-3-18-6-17-12 1-6 10-9 22-8 6 1 12 3 17 6l5-15z"
+            fill="url(#shenaSilverS)"
+            stroke="#e2e8f0"
+            strokeWidth="1.2"
+          />
+          <path
+            d="M20 104C10 78 38 48 92 26c-38 22-60 49-54 74 1 4 3 7 6 9-10 1-19-1-24-5z"
+            fill="url(#shenaOrangeArc)"
+          />
+          <g transform="translate(82, 12) rotate(-18)">
+            <path
+              d="M2 16L18 11L30 2L34 3L27 11L38 9C41 8.5 43 9.5 43 11C43 12.5 41 14 38 14.5L26 17L29 26L25 27L17 19L4 21L0 18L2 16Z"
+              fill="url(#shenaOrangeArc)"
+            />
+            <path d="M18 11L30 2L32 2.5L23 11Z" fill="#ffffff" opacity="0.85" />
+          </g>
         </svg>
       )}
       <div className="leading-tight">
-        <div className={`font-extrabold tracking-tight ${titleSize} ${textColor}`}>
-          SHENA <span className={subColor}>Express</span>
+        <div className={`font-extrabold italic tracking-tight ${titleSize} flex items-baseline gap-1.5`}>
+          <span className={shenaColor}>SHENA</span>
+          <span className="inline-flex items-center gap-1">
+            <span className="hidden sm:inline-flex flex-col gap-0.5 mr-0.5" aria-hidden="true">
+              <span className="block h-0.5 w-3 rounded-full bg-orange-500" />
+              <span className="block h-0.5 w-4 rounded-full bg-orange-500" />
+              <span className="block h-0.5 w-2.5 rounded-full bg-orange-400" />
+            </span>
+            <span className="text-orange-500 font-extrabold italic">Express</span>
+          </span>
         </div>
+        <div className="h-0.5 w-full rounded-full bg-gradient-to-r from-transparent via-orange-500 to-transparent opacity-80 my-0.5" />
         {subtitle && (
-          <div className={`text-[11px] font-semibold uppercase tracking-wider ${variant === "light" ? "text-slate-300" : "text-slate-500"}`}>
+          <div
+            className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest ${
+              variant === "light" ? "text-slate-300" : "text-slate-500"
+            }`}
+          >
             {subtitle}
           </div>
         )}
@@ -184,7 +236,7 @@ export function TransportBadge({ mode }: { mode?: TransportMode | null }) {
 /* ---------------------------------------------------- Shipment ProgressBar */
 export function ShipmentProgress({ status, lastStep = 0 }: { status: StatusCode; lastStep?: number }) {
   const { labelForStatus } = useSettings();
-  const current = progressStep(status, lastStep);
+  const current = shenaStepNumber(status, lastStep);
 
   if (status === "cancelled") {
     return (
@@ -200,45 +252,103 @@ export function ShipmentProgress({ status, lastStep = 0 }: { status: StatusCode;
   }
 
   return (
-    <div role="region" aria-label={`Progression : ${labelForStatus(status)}`} className="space-y-2">
+    <div role="region" aria-label={`Progression : ${labelForStatus(status)}`} className="space-y-2.5">
       {(status === "delayed" || status === "info_required") && (
         <div className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-medium text-orange-900 flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 shrink-0 text-orange-600" aria-hidden="true" />
           <span>Statut particulier en cours : {labelForStatus(status)}</span>
         </div>
       )}
-      <ol className="grid grid-cols-2 gap-2 sm:grid-cols-6">
-        {PROGRESS_STEPS.map((item) => {
-          const done = current !== null && item.step < current;
-          const active = current === item.step;
+      <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {SHENA_LOGISTICS_STEPS.map((item) => {
+          const done = current !== null && item.shenaStep < current;
+          const active = current === item.shenaStep;
+          const isFinalReady = Boolean(item.isAvailabilityState) && active;
           return (
             <li
-              key={item.step}
+              key={item.shenaStep}
               aria-current={active ? "step" : undefined}
-              className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-semibold transition ${
-                active
-                  ? "border-royal-600 bg-blue-50 text-navy-900 shadow-xs"
-                  : done
-                    ? "border-emerald-200 bg-emerald-50/70 text-emerald-900"
-                    : "border-slate-200 bg-white text-slate-400"
+              className={`flex items-start gap-2.5 rounded-xl border p-3 text-xs transition ${
+                isFinalReady
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-950 shadow-xs ring-1 ring-emerald-400"
+                  : active
+                    ? "border-royal-600 bg-blue-50 text-navy-900 shadow-xs ring-1 ring-royal-500"
+                    : done
+                      ? "border-emerald-200 bg-emerald-50/70 text-emerald-900"
+                      : "border-slate-200 bg-white text-slate-400"
               }`}
             >
               <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
-                  active
-                    ? "bg-royal-600 text-white"
-                    : done
-                      ? "bg-emerald-600 text-white"
-                      : "bg-slate-100 text-slate-500"
+                className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold ${
+                  isFinalReady
+                    ? "bg-emerald-600 text-white"
+                    : active
+                      ? "bg-royal-600 text-white"
+                      : done
+                        ? "bg-emerald-600 text-white"
+                        : "bg-slate-100 text-slate-500"
                 }`}
               >
-                {done ? "✓" : item.step + 1}
+                {done || isFinalReady ? "✓" : item.shenaStep}
               </span>
-              <span className="truncate">{item.label}</span>
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="text-[10px] font-extrabold uppercase tracking-wider opacity-75">
+                  {item.isAvailabilityState ? "Disponibilité finale" : `Étape ${item.shenaStep}`}
+                </div>
+                <div className="font-bold leading-snug">{item.stepTitle}</div>
+                <div className="text-[11px] font-medium opacity-80">
+                  {done ? "Étape confirmée" : active ? (isFinalReady ? "Prêt au local" : "Étape actuelle") : "À venir"}
+                </div>
+              </div>
             </li>
           );
         })}
       </ol>
+    </div>
+  );
+}
+
+/* ---------------------------------------------- Pickup Availability Banner */
+export function PickupAvailabilityBanner({
+  status,
+  instructions,
+}: {
+  status: StatusCode;
+  instructions?: string | null;
+}) {
+  const ready = isAvailableForPickup(status);
+  const desc = statusDescription(status);
+  const loc = statusLocation(status);
+
+  if (ready) {
+    return (
+      <div
+        role="status"
+        className="rounded-2xl border-2 border-emerald-500 bg-emerald-50 p-4 text-emerald-950 shadow-xs space-y-1.5"
+      >
+        <div className="flex items-center gap-2 text-sm font-extrabold text-emerald-900">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" aria-hidden="true" />
+          <span>Disponible pour le retrait</span>
+        </div>
+        <p className="text-xs sm:text-sm font-medium text-emerald-900">{desc}</p>
+        {instructions && (
+          <p className="text-xs text-emerald-800 pt-1 border-t border-emerald-200/80">
+            <strong>Instructions de retrait :</strong> {instructions}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700 space-y-1">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-bold text-navy-900">Étape logistique actuelle : {loc}</span>
+        <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700">
+          Pas encore disponible pour le retrait
+        </span>
+      </div>
+      <p className="text-slate-600">{desc}</p>
     </div>
   );
 }
@@ -269,11 +379,13 @@ export function TrackingTimeline({
 }) {
   const { labelForStatus } = useSettings();
 
-  const sorted = [...events].sort((a, b) => {
-    const ta = a.at && typeof a.at.toMillis === "function" ? a.at.toMillis() : 0;
-    const tb = b.at && typeof b.at.toMillis === "function" ? b.at.toMillis() : 0;
-    return ta - tb;
-  });
+  const sorted = [...events]
+    .filter((ev) => ev.kind !== "dates")
+    .sort((a, b) => {
+      const ta = a.at && typeof a.at.toMillis === "function" ? a.at.toMillis() : 0;
+      const tb = b.at && typeof b.at.toMillis === "function" ? b.at.toMillis() : 0;
+      return ta - tb;
+    });
 
   if (sorted.length === 0) {
     return <p className="text-sm text-slate-500 py-4">Aucun événement enregistré pour le moment.</p>;
@@ -282,7 +394,6 @@ export function TrackingTimeline({
   return (
     <ol className="relative border-s-2 border-slate-200 ms-3 space-y-5 py-1">
       {sorted.map((ev) => {
-        const dateKeys = ev.dateChanges ? Object.keys(ev.dateChanges) : [];
         const internal = internalNotesById?.[ev.id];
         return (
           <li key={ev.id} className="ms-5">
@@ -295,7 +406,7 @@ export function TrackingTimeline({
                 {ev.toStatus ? (
                   <StatusBadge status={ev.toStatus} size="sm" />
                 ) : (
-                  <span className="text-xs font-semibold text-navy-900">Mise à jour des dates</span>
+                  <span className="text-xs font-semibold text-navy-900">Mise à jour du suivi</span>
                 )}
                 {ev.fromStatus && ev.toStatus && ev.fromStatus !== ev.toStatus && (
                   <span className="text-xs text-slate-500">
@@ -306,22 +417,6 @@ export function TrackingTimeline({
               <time className="text-xs font-medium text-slate-500">{formatEventTimestamp(ev.at)}</time>
             </div>
             {ev.publicNote && <p className="mt-1.5 text-sm text-slate-700">{ev.publicNote}</p>}
-            {dateKeys.length > 0 && (
-              <ul className="mt-1.5 space-y-0.5 text-xs text-slate-600">
-                {dateKeys.map((k) => {
-                  const [before, after] = ev.dateChanges![k]!;
-                  const label = DATE_FIELD_LABELS[k as keyof ShipmentDates] ?? k;
-                  return (
-                    <li key={k}>
-                      <span className="font-medium">{label} :</span>{" "}
-                      {before ? `${formatIsoDate(before)} → ` : ""}
-                      <span className="font-semibold text-navy-900">{formatIsoDate(after)}</span>{" "}
-                      <span className="text-slate-500">(estimation)</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
             {internal && (
               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-1.5 text-xs text-amber-950">
                 <span className="font-semibold">Note interne (privée) :</span> {internal}

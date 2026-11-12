@@ -1,6 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SHENA Express">
-  <rect width="64" height="64" rx="14" fill="#0f2342"/>
-  <path d="M12 22h26l8 10-8 10H12l7-10-7-10z" fill="#1d4ed8"/>
-  <path d="M24 18h18l10 14-10 14H24l9-14-9-14z" fill="#d4a017"/>
-  <circle cx="48" cy="32" r="3" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="SHENA Express">
+  <defs>
+    <linearGradient id="bgNavy" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b192e" />
+      <stop offset="100%" stop-color="#152c4e" />
+    </linearGradient>
+    <linearGradient id="silverS" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="30%" stop-color="#cbd5e1" />
+      <stop offset="55%" stop-color="#64748b" />
+      <stop offset="80%" stop-color="#f1f5f9" />
+      <stop offset="100%" stop-color="#94a3b8" />
+    </linearGradient>
+    <linearGradient id="silverEdge" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#475569" />
+      <stop offset="50%" stop-color="#e2e8f0" />
+      <stop offset="100%" stop-color="#94a3b8" />
+    </linearGradient>
+    <linearGradient id="orangeArc" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c2410c" />
+      <stop offset="45%" stop-color="#f97316" />
+      <stop offset="100%" stop-color="#fbbf24" />
+    </linearGradient>
+  </defs>
+
+  <rect width="128" height="128" rx="26" fill="url(#bgNavy)" />
+
+  <!-- Ombre portée du S -->
+  <path
+    d="M83 28C63 24 41 31 38 47c-2 11 8 17 24 21 13 3 18 6 17 12-2 8-13 12-28 10-8-1-16-4-22-8l-7 15c8 6 19 9 32 10 24 2 43-8 46-25 3-13-6-21-24-25-13-3-18-6-17-12 1-6 10-9 22-8 6 1 12 3 17 6l5-15z"
+    fill="#060f1d"
+    transform="translate(3, 4)"
+    opacity="0.65"
+  />
+
+  <!-- Lettre S métallique argentée -->
+  <path
+    d="M83 28C63 24 41 31 38 47c-2 11 8 17 24 21 13 3 18 6 17 12-2 8-13 12-28 10-8-1-16-4-22-8l-7 15c8 6 19 9 32 10 24 2 43-8 46-25 3-13-6-21-24-25-13-3-18-6-17-12 1-6 10-9 22-8 6 1 12 3 17 6l5-15z"
+    fill="url(#silverS)"
+    stroke="url(#silverEdge)"
+    stroke-width="1.5"
+  />
+
+  <!-- Trajectoire dynamique orange traversant le S -->
+  <path
+    d="M20 104C10 78 38 48 92 26c-38 22-60 49-54 74 1 4 3 7 6 9-10 1-19-1-24-5z"
+    fill="url(#orangeArc)"
+  />
+
+  <!-- Avion au sommet de la trajectoire -->
+  <g transform="translate(82, 12) rotate(-18)">
+    <path
+      d="M2 16L18 11L30 2L34 3L27 11L38 9C41 8.5 43 9.5 43 11C43 12.5 41 14 38 14.5L26 17L29 26L25 27L17 19L4 21L0 18L2 16Z"
+      fill="url(#orangeArc)"
+    />
+    <path d="M18 11L30 2L32 2.5L23 11Z" fill="#ffffff" opacity="0.85" />
+  </g>
 </svg>

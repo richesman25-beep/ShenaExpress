@@ -152,6 +152,9 @@ export const api = {
   createOrder: call<
     {
       clientId: string;
+      trackingNumber?: string | null;
+      initialStatus?: StatusCode | null;
+      description?: string | null;
       merchant?: string | null;
       merchantOrderRef?: string | null;
       orderDate: string;
@@ -173,6 +176,9 @@ export const api = {
   updateOrder: call<
     {
       orderId: string;
+      trackingNumber?: string | null;
+      initialStatus?: StatusCode | null;
+      description?: string | null;
       merchant?: string | null;
       merchantOrderRef?: string | null;
       orderDate: string;
@@ -204,6 +210,9 @@ export const api = {
     {
       clientId: string;
       trackingNumber?: string | null;
+      initialStatus?: StatusCode | null;
+      orderRef?: string | null;
+      description?: string | null;
       transportMode: TransportMode;
       weightKg?: number | null;
       dimensionsCm?: { length: number; width: number; height: number } | null;
@@ -220,6 +229,9 @@ export const api = {
     {
       shipmentId: string;
       trackingNumber?: string | null;
+      initialStatus?: StatusCode | null;
+      orderRef?: string | null;
+      description?: string | null;
       transportMode: TransportMode;
       weightKg?: number | null;
       dimensionsCm?: { length: number; width: number; height: number } | null;

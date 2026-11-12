@@ -18,24 +18,23 @@ import {
   Menu,
   X,
   Search,
-  Calendar,
-  AlertTriangle,
   CheckCircle2,
   ArrowLeft,
   ChevronRight,
   CreditCard,
+  MapPin,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useI18n } from "@/i18n";
 import { getFirebaseDb } from "@/lib/firebase";
 import {
-  STATUS_CODES,
+  SHENA_PRIMARY_STATUSES,
   countShipmentsByBucket,
   sumOrderStats,
-  relevantDates,
-  isLate,
-  todayIso,
+  isAvailableForPickup,
+  statusDescription,
+  statusLocation,
   formatIsoDate,
   formatMoney,
   PAYMENT_STATUS_LABELS,
@@ -52,6 +51,7 @@ import {
   StatusBadge,
   TransportBadge,
   ShipmentProgress,
+  PickupAvailabilityBanner,
   TrackingTimeline,
   WhatsappContactButton,
   EmptyState,
@@ -319,25 +319,6 @@ export function ClientDashboardPage() {
   const stats = useMemo(() => sumOrderStats(orders.map((o) => o.stats)), [orders]);
   const buckets = useMemo(() => countShipmentsByBucket(shipments), [shipments]);
 
-  const upcomingDates = useMemo(() => {
-    const list: { shipmentId: string; trackingNumber: string; label: string; value: string }[] = [];
-    for (const s of shipments) {
-      if (s.status === "delivered" || s.status === "cancelled") continue;
-      const rel = relevantDates(s.status, s.dates ?? {});
-      for (const r of rel) {
-        if (r.estimate || r.field === "availableAt") {
-          list.push({
-            shipmentId: s.shipmentId,
-            trackingNumber: s.trackingNumber,
-            label: r.label,
-            value: r.value,
-          });
-        }
-      }
-    }
-    return list.sort((a, b) => a.value.localeCompare(b.value)).slice(0, 5);
-  }, [shipments]);
-
   if (loading) {
     return <p className="text-sm text-slate-600 py-8">Chargement de votre espace personnel…</p>;
   }
@@ -354,7 +335,7 @@ export function ClientDashboardPage() {
             Bienvenue{profile?.fullName ? `, ${profile.fullName}` : ""}
           </h1>
           <p className="text-sm text-slate-300">
-            Consultez en temps réel l&apos;état de vos commandes, de vos articles et de vos colis.
+            Suivez l&apos;étape logistique de vos colis et vérifiez s&apos;ils sont disponibles pour le retrait.
           </p>
         </div>
         <div className="shrink-0">
@@ -369,54 +350,57 @@ export function ClientDashboardPage() {
       )}
 
       {/* Cartes d'indicateurs calculés à partir des données réelles */}
-      <section aria-label="Indicateurs personnels" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <section aria-label="Indicateurs personnels" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiCard label="Commandes" value={orders.length} tone="navy" />
-        <KpiCard label="Articles commandés" value={stats.ordered} tone="neutral" />
-        <KpiCard label="Articles reçus" value={stats.received} tone="sky" />
-        <KpiCard label="Colis en transit" value={buckets.transit} tone="blue" />
-        <KpiCard label="Colis disponibles" value={buckets.available} tone="amber" />
-        <KpiCard label="Colis livrés" value={buckets.delivered} tone="emerald" />
+        <KpiCard label="Reçus à Miami" value={buckets.pending || stats.received} tone="sky" />
+        <KpiCard label="Transit aérien (Rép. Dom.)" value={buckets.transit} tone="blue" />
+        <KpiCard label="En route vers Haïti" value={buckets.arrived} tone="amber" />
+        <KpiCard label="Disponibles pour retrait" value={buckets.available + buckets.delivered} tone="emerald" />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-12">
-        {/* Prochaines dates estimées */}
+        {/* Suivi rapide des colis et disponibilité pour le retrait */}
         <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-extrabold text-navy-900 flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-royal-600" aria-hidden="true" />
-              <span>Prochaines dates estimées</span>
+              <Package className="h-4 w-4 text-royal-600" aria-hidden="true" />
+              <span>Suivi de mes colis &amp; retrait</span>
             </h2>
             <Link to="/espace-client/colis" className="text-xs font-bold text-royal-600 hover:underline">
               Voir tous les colis →
             </Link>
           </div>
-          {upcomingDates.length === 0 ? (
+          {shipments.length === 0 ? (
             <p className="text-xs text-slate-500 py-4">
-              Aucune date estimée en attente pour le moment.
+              Aucun colis enregistré pour le moment.
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {upcomingDates.map((d, idx) => (
-                <li key={`${d.shipmentId}-${idx}`} className="py-3 flex items-center justify-between gap-3">
-                  <div>
-                    <Link
-                      to={`/espace-client/colis/${d.shipmentId}`}
-                      className="text-sm font-bold text-navy-900 hover:text-royal-600"
-                    >
-                      Colis {d.trackingNumber}
-                    </Link>
-                    <p className="text-xs text-slate-500">{d.label} (estimation)</p>
-                  </div>
-                  <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-royal-700">
-                    {formatIsoDate(d.value)}
-                  </span>
-                </li>
-              ))}
+              {shipments.slice(0, 5).map((sh) => {
+                const ready = isAvailableForPickup(sh.status);
+                return (
+                  <li key={sh.shipmentId} className="py-3 space-y-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Link
+                        to={`/espace-client/colis/${sh.shipmentId}`}
+                        className="text-sm font-extrabold text-navy-900 hover:text-royal-600"
+                      >
+                        Suivi : {sh.trackingNumber}
+                      </Link>
+                      <StatusBadge status={sh.status} size="sm" />
+                    </div>
+                    <p className="text-xs text-slate-600">{statusDescription(sh.status)}</p>
+                    {ready && (
+                      <div className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-extrabold text-emerald-900">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                        <span>Disponible pour le retrait à notre local en Haïti</span>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
-          <p className="text-[11px] text-slate-500">
-            Les dates affichées sont des estimations fournies à titre indicatif et non des garanties.
-          </p>
         </section>
 
         {/* Dernières mises à jour */}
@@ -427,33 +411,36 @@ export function ClientDashboardPage() {
               Mes commandes →
             </Link>
           </div>
-          {events.length === 0 ? (
+          {events.filter((e) => e.kind !== "dates").length === 0 ? (
             <p className="text-xs text-slate-500 py-4">Aucune mise à jour enregistrée pour le moment.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {events.slice(0, 6).map((ev) => (
-                <li key={ev.id} className="py-3 space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-navy-900">
-                      {ev.shipmentId ? (
-                        <Link to={`/espace-client/colis/${ev.shipmentId}`} className="hover:text-royal-600">
-                          Colis {ev.shipmentId}
-                        </Link>
-                      ) : ev.orderId ? (
-                        <Link to={`/espace-client/commandes/${ev.orderId}`} className="hover:text-royal-600">
-                          Commande {ev.orderId}
-                        </Link>
-                      ) : (
-                        "Suivi"
+              {events
+                .filter((e) => e.kind !== "dates")
+                .slice(0, 6)
+                .map((ev) => (
+                  <li key={ev.id} className="py-3 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-navy-900">
+                        {ev.shipmentId ? (
+                          <Link to={`/espace-client/colis/${ev.shipmentId}`} className="hover:text-royal-600">
+                            Colis {ev.shipmentId}
+                          </Link>
+                        ) : ev.orderId ? (
+                          <Link to={`/espace-client/commandes/${ev.orderId}`} className="hover:text-royal-600">
+                            Commande {ev.orderId}
+                          </Link>
+                        ) : (
+                          "Suivi"
+                        )}
+                      </span>
+                      {ev.toStatus && (
+                        <span className="text-xs font-semibold text-royal-600">{labelForStatus(ev.toStatus)}</span>
                       )}
-                    </span>
-                    {ev.toStatus && (
-                      <span className="text-xs font-semibold text-royal-600">{labelForStatus(ev.toStatus)}</span>
-                    )}
-                  </div>
-                  {ev.publicNote && <p className="text-xs text-slate-600">{ev.publicNote}</p>}
-                </li>
-              ))}
+                    </div>
+                    {ev.publicNote && <p className="text-xs text-slate-600">{ev.publicNote}</p>}
+                  </li>
+                ))}
             </ul>
           )}
         </section>
@@ -546,7 +533,7 @@ export function ClientOrdersPage() {
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
           >
             <option value="all">Tous les statuts</option>
-            {STATUS_CODES.map((c) => (
+            {SHENA_PRIMARY_STATUSES.map((c) => (
               <option key={c} value={c}>
                 {labelForStatus(c)}
               </option>
@@ -780,19 +767,19 @@ export function ClientOrderDetailPage() {
         </div>
       </section>
 
-      {/* Colis associés et dates estimées */}
+      {/* Colis associés */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
         <h2 className="text-base font-extrabold text-navy-900">
-          Colis associés &amp; dates estimées ({orderShipments.length})
+          Colis associés ({orderShipments.length})
         </h2>
         {orderShipments.length === 0 ? (
           <p className="text-xs text-slate-500">
-            Aucun colis n&apos;est encore associé à cette commande. Vos articles seront regroupés ou répartis en colis dès leur préparation.
+            Aucun colis n&apos;est encore associé à cette commande.
           </p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {orderShipments.map((sh) => {
-              const dates = relevantDates(sh.status, sh.dates ?? {});
+              const ready = isAvailableForPickup(sh.status);
               return (
                 <div key={sh.shipmentId} className="rounded-xl border border-slate-200 p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
@@ -804,22 +791,12 @@ export function ClientOrderDetailPage() {
                     </Link>
                     <StatusBadge status={sh.status} size="sm" />
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-slate-600">
-                    <TransportBadge mode={sh.transportMode} />
-                    <span>• {sh.itemCount} article(s)</span>
-                    {sh.weightKg ? <span>• {sh.weightKg} kg</span> : null}
-                  </div>
-                  {dates.length > 0 && (
-                    <ul className="space-y-1 text-xs text-slate-700 bg-slate-50 rounded-lg p-2.5">
-                      {dates.map((d) => (
-                        <li key={d.field} className="flex justify-between gap-2">
-                          <span className="text-slate-500">
-                            {d.label} {d.estimate ? "(estimation)" : ""} :
-                          </span>
-                          <span className="font-bold">{formatIsoDate(d.value)}</span>
-                        </li>
-                      ))}
-                    </ul>
+                  <p className="text-xs text-slate-600">{statusDescription(sh.status)}</p>
+                  {ready && (
+                    <div className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-extrabold text-emerald-900">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                      <span>Disponible pour le retrait</span>
+                    </div>
                   )}
                   <div className="flex items-center justify-between pt-1">
                     <Link
@@ -920,9 +897,9 @@ export function ClientOrderDetailPage() {
 
 /* --------------------------------------------------- D. Suivi des Colis */
 export function ClientShipmentsPage() {
+  const { settings } = useSettings();
   const { shipments } = useClientData();
   const [search, setSearch] = useState("");
-  const today = todayIso();
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -940,7 +917,7 @@ export function ClientShipmentsPage() {
       <div>
         <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Suivi de mes colis</h1>
         <p className="text-xs text-slate-600">
-          Ouvrez un colis pour voir sa progression étape par étape, ses dates estimées et les instructions de retrait.
+          Consultez l&apos;étape logistique actuelle de vos colis et vérifiez s&apos;ils sont disponibles pour le retrait.
         </p>
       </div>
 
@@ -953,7 +930,7 @@ export function ClientShipmentsPage() {
           <input
             id="client-shipment-search"
             type="search"
-            placeholder="Rechercher par numéro de suivi ou numéro de commande…"
+            placeholder="Rechercher par numéro de suivi…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-xl border border-slate-300 ps-10 pe-3 py-2 text-sm"
@@ -966,7 +943,7 @@ export function ClientShipmentsPage() {
       ) : (
         <div className="grid gap-4">
           {filtered.map((sh) => {
-            const late = isLate(sh.status, sh.dates ?? {}, today);
+            const instructions = sh.pickupInstructions || settings.pickupInstructions;
             return (
               <article key={sh.shipmentId} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -976,19 +953,13 @@ export function ClientShipmentsPage() {
                         to={`/espace-client/colis/${sh.shipmentId}`}
                         className="text-base font-extrabold text-navy-900 hover:text-royal-600"
                       >
-                        Suivi : {sh.trackingNumber}
+                        Numéro de suivi : {sh.trackingNumber}
                       </Link>
                       <StatusBadge status={sh.status} />
-                      <TransportBadge mode={sh.transportMode} />
-                      {late && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-bold text-orange-900">
-                          <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                          Estimation dépassée
-                        </span>
-                      )}
                     </div>
-                    <p className="text-xs text-slate-500">
-                      Réf. colis : {sh.shipmentId} • {sh.itemCount} article(s) • Commandes : {sh.orderIds.join(", ") || "—"}
+                    <p className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                      <MapPin className="h-3.5 w-3.5 text-royal-600 shrink-0" aria-hidden="true" />
+                      <span>{statusLocation(sh.status)}</span>
                     </p>
                   </div>
                   <Link
@@ -999,6 +970,8 @@ export function ClientShipmentsPage() {
                     <ChevronRight className="h-4 w-4" aria-hidden="true" />
                   </Link>
                 </div>
+
+                <PickupAvailabilityBanner status={sh.status} instructions={instructions} />
                 <ShipmentProgress status={sh.status} lastStep={sh.lastStep} />
               </article>
             );
@@ -1035,7 +1008,6 @@ export function ClientShipmentDetailPage() {
     );
   }
 
-  const dates = relevantDates(sh.status, sh.dates ?? {});
   const instructions = sh.pickupInstructions || settings.pickupInstructions;
 
   return (
@@ -1055,100 +1027,58 @@ export function ClientShipmentDetailPage() {
         />
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="space-y-1">
+            <div className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+              Numéro de suivi
+            </div>
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">
-                Colis {sh.trackingNumber}
+                {sh.trackingNumber}
               </h1>
               <StatusBadge status={sh.status} />
-              <TransportBadge mode={sh.transportMode} />
             </div>
-            <p className="mt-1 text-xs text-slate-500">
-              Identifiant colis : {sh.shipmentId}
-              {sh.weightKg ? ` • Poids : ${sh.weightKg} kg` : ""}
-              {sh.dimensionsCm
-                ? ` • Dimensions : ${sh.dimensionsCm.length}×${sh.dimensionsCm.width}×${sh.dimensionsCm.height} cm`
-                : ""}
+            <p className="text-xs font-semibold text-slate-600 flex items-center gap-1.5 pt-0.5">
+              <MapPin className="h-3.5 w-3.5 text-royal-600 shrink-0" aria-hidden="true" />
+              <span>Emplacement / étape actuelle : {statusLocation(sh.status)}</span>
             </p>
           </div>
         </div>
 
-        <ShipmentProgress status={sh.status} lastStep={sh.lastStep} />
+        <PickupAvailabilityBanner status={sh.status} instructions={instructions} />
 
-        {sh.dateChangeMessage && (
-          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-950">
-            <span className="font-bold">Note sur le délai : </span>
-            {sh.dateChangeMessage}
-          </div>
-        )}
+        <div className="space-y-2">
+          <h2 className="text-xs font-extrabold uppercase tracking-wider text-navy-900">
+            Progression logistique SHENA Express
+          </h2>
+          <ShipmentProgress status={sh.status} lastStep={sh.lastStep} />
+        </div>
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-12">
-        {/* Dates estimées & instructions */}
-        <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
-          <h2 className="text-base font-extrabold text-navy-900">Dates &amp; estimations</h2>
-          {dates.length === 0 ? (
-            <p className="text-xs text-slate-500">Aucune date enregistrée pour le moment.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100 text-sm">
-              {dates.map((d) => (
-                <li key={d.field} className="py-2.5 flex items-center justify-between gap-2">
-                  <span className="text-slate-600">
-                    {d.label}{" "}
-                    {d.estimate && <span className="text-xs text-slate-400">(estimation)</span>}
-                  </span>
-                  <span className="font-bold text-navy-900">{formatIsoDate(d.value)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="text-[11px] text-slate-500">
-            Une date estimée est fournie à titre indicatif et ne constitue jamais une garantie.
-          </p>
-
-          {instructions && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-1 text-xs text-emerald-950">
-              <div className="font-bold">Instructions de retrait / livraison</div>
-              <p className="leading-relaxed">{instructions}</p>
-            </div>
-          )}
-        </section>
-
-        {/* Articles contenus dans ce colis */}
-        <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+      {sh.lines.length > 0 && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-3">
           <h2 className="text-base font-extrabold text-navy-900">
-            Articles dans ce colis ({sh.itemCount})
+            Description du colis
           </h2>
-          {sh.lines.length === 0 ? (
-            <p className="text-xs text-slate-500">Détail des articles en attente d&apos;affectation.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100 text-sm">
-              {sh.lines.map((l) => (
-                <li key={`${l.orderId}-${l.lineId}`} className="py-2.5 flex items-center justify-between gap-3">
-                  <div>
-                    <div className="font-semibold text-navy-900">{l.description}</div>
-                    <Link
-                      to={`/espace-client/commandes/${l.orderId}`}
-                      className="text-xs text-royal-600 hover:underline"
-                    >
-                      Commande {l.orderId}
-                    </Link>
-                  </div>
+          <ul className="divide-y divide-slate-100 text-sm">
+            {sh.lines.map((l) => (
+              <li key={`${l.orderId}-${l.lineId}`} className="py-2 flex items-center justify-between gap-3">
+                <span className="font-semibold text-navy-900">{l.description}</span>
+                {l.quantity > 1 && (
                   <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-800">
                     Qté : {l.quantity}
                   </span>
-                </li>
-              ))}
-            </ul>
-          )}
+                )}
+              </li>
+            ))}
+          </ul>
         </section>
-      </div>
+      )}
 
       {/* Historique chronologique */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
-        <h2 className="text-base font-extrabold text-navy-900">Historique des événements</h2>
+        <h2 className="text-base font-extrabold text-navy-900">Historique du suivi</h2>
         <TrackingTimeline events={shEvents} />
       </section>
     </div>

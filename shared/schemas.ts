@@ -120,16 +120,31 @@ export const orderItemInputSchema = z.object({
 });
 
 export const orderBaseSchema = z.object({
+  trackingNumber: z
+    .string()
+    .trim()
+    .max(60)
+    .refine((v) => v === "" || /^[A-Za-z0-9_-]{3,60}$/.test(v), {
+      message: "Numéro de suivi : 3 à 60 caractères (lettres, chiffres, tirets).",
+    })
+    .nullish()
+    .transform((v) => (v ? v.toUpperCase() : null)),
+  initialStatus: statusSchema.nullish().transform((v) => v ?? null),
+  description: optionalText(300),
   merchant: optionalText(120),
   merchantOrderRef: optionalText(80),
-  orderDate: isoDate,
-  currency: currencySchema,
+  orderDate: isoDate.optional().default(() => new Date().toISOString().slice(0, 10)),
+  currency: currencySchema.optional().default("USD"),
   transportMode: transportSchema.nullish().transform((v) => v ?? null),
   publicNote: optionalText(1000),
   internalNotes: optionalText(4000),
-  items: z.array(orderItemInputSchema).min(1, { message: "Ajoutez au moins un article." }).max(200),
+  items: z.array(orderItemInputSchema).max(200).optional().default([]),
 });
-export const createOrderSchema = orderBaseSchema.extend({ clientId: clientIdSchema });
+export const createOrderSchema = orderBaseSchema
+  .extend({ clientId: clientIdSchema })
+  .refine((d) => d.items.length > 0 || Boolean(d.trackingNumber) || Boolean(d.description), {
+    message: "Indiquez un numéro de suivi ou au moins un article.",
+  });
 export const updateOrderSchema = orderBaseSchema.extend({ orderId: orderIdSchema });
 
 export const recordReceiptSchema = z.object({
@@ -139,16 +154,28 @@ export const recordReceiptSchema = z.object({
 });
 
 /* ----------------------------------------------------------- shipments */
-export const shipmentDatesSchema = z.object({
-  warehouseReceivedAt: optionalDate,
-  estimatedDeparture: optionalDate,
-  shippedAt: optionalDate,
-  estimatedArrival: optionalDate,
-  deliveryWindowStart: optionalDate,
-  deliveryWindowEnd: optionalDate,
-  availableAt: optionalDate,
-  deliveredAt: optionalDate,
-});
+export const shipmentDatesSchema = z
+  .object({
+    warehouseReceivedAt: optionalDate,
+    estimatedDeparture: optionalDate,
+    shippedAt: optionalDate,
+    estimatedArrival: optionalDate,
+    deliveryWindowStart: optionalDate,
+    deliveryWindowEnd: optionalDate,
+    availableAt: optionalDate,
+    deliveredAt: optionalDate,
+  })
+  .optional()
+  .default({
+    warehouseReceivedAt: null,
+    estimatedDeparture: null,
+    shippedAt: null,
+    estimatedArrival: null,
+    deliveryWindowStart: null,
+    deliveryWindowEnd: null,
+    availableAt: null,
+    deliveredAt: null,
+  });
 
 const shipmentLineInput = z.object({
   orderId: orderIdSchema,
@@ -166,13 +193,16 @@ export const shipmentBaseSchema = z.object({
     .string()
     .trim()
     .max(60)
-    .refine((v) => v === "" || /^[A-Za-z0-9-]{4,60}$/.test(v), { message: "Numéro de suivi : lettres, chiffres et tirets." })
+    .refine((v) => v === "" || /^[A-Za-z0-9_-]{3,60}$/.test(v), { message: "Numéro de suivi : lettres, chiffres et tirets." })
     .nullish()
     .transform((v) => (v ? v.toUpperCase() : null)),
-  transportMode: transportSchema,
+  initialStatus: statusSchema.nullish().transform((v) => v ?? null),
+  orderRef: optionalText(80),
+  description: optionalText(300),
+  transportMode: transportSchema.optional().default("air"),
   weightKg: z.number().positive().max(100000).nullish().transform((v) => v ?? null),
   dimensionsCm: dimensions,
-  lines: z.array(shipmentLineInput).max(200),
+  lines: z.array(shipmentLineInput).max(200).optional().default([]),
   dates: shipmentDatesSchema,
   dateChangeMessage: optionalText(500),
   pickupInstructions: optionalText(1000),

@@ -13,18 +13,14 @@ import {
   Menu,
   X,
   Search,
-  AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useI18n } from "@/i18n";
 import { getFirebaseDb } from "@/lib/firebase";
 import {
-  STATUS_CODES,
+  SHENA_PRIMARY_STATUSES,
   countShipmentsByBucket,
-  isLate,
-  todayIso,
-  formatIsoDate,
   formatMoney,
   type ClientDoc,
   type OrderDoc,
@@ -311,8 +307,6 @@ export function AdminOverviewPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [clientFilter, setClientFilter] = useState<string>("all");
 
-  const today = todayIso();
-
   const cutoffIso = useMemo(() => {
     if (periodDays === "all") return null;
     const days = Number(periodDays);
@@ -356,13 +350,9 @@ export function AdminOverviewPage() {
   const receivedShipmentsCount = useMemo(
     () =>
       filteredShipments.filter(
-        (s) => s.status !== "cancelled" && s.status !== "registered" && s.status !== "awaiting_receipt",
+        (s) => s.status === "received" || s.status === "registered" || s.status === "partially_received" || s.status === "preparing",
       ).length,
     [filteredShipments],
-  );
-  const lateShipments = useMemo(
-    () => filteredShipments.filter((s) => isLate(s.status, s.dates ?? {}, today)),
-    [filteredShipments, today],
   );
 
   const pendingPayments = useMemo(() => {
@@ -396,13 +386,13 @@ export function AdminOverviewPage() {
             to="/admin/commandes"
             className="rounded-xl bg-royal-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-royal-700"
           >
-            + Nouvelle commande
+            + Enregistrer une commande
           </Link>
           <Link
             to="/admin/colis"
             className="rounded-xl bg-navy-900 px-3.5 py-2 text-xs font-bold text-white hover:bg-navy-800"
           >
-            + Nouveau colis
+            + Suivi des colis
           </Link>
         </div>
       </div>
@@ -420,7 +410,7 @@ export function AdminOverviewPage() {
           <input
             id="overview-search"
             type="search"
-            placeholder="Rechercher commande, suivi, client…"
+            placeholder="Rechercher par numéro de suivi, commande ou client…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-xl border border-slate-300 ps-10 pe-3 py-2 text-sm"
@@ -453,7 +443,7 @@ export function AdminOverviewPage() {
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
           >
             <option value="all">Tous les statuts</option>
-            {STATUS_CODES.map((c) => (
+            {SHENA_PRIMARY_STATUSES.map((c) => (
               <option key={c} value={c}>
                 {labelForStatus(c)}
               </option>
@@ -481,50 +471,22 @@ export function AdminOverviewPage() {
       </section>
 
       {/* Indicateurs calculés à partir des données réelles */}
-      <section aria-label="Indicateurs clés" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <section aria-label="Indicateurs clés" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <AdminKpi label="Total clients" value={clients.length} sub={`${clients.filter((c) => c.status === "active").length} actif(s)`} />
-        <AdminKpi label="Commandes enregistrées" value={filteredOrders.length} />
-        <AdminKpi label="Colis reçus" value={receivedShipmentsCount} />
-        <AdminKpi label="Colis en transit" value={buckets.transit} />
-        <AdminKpi label="Arrivés en Haïti" value={buckets.arrived} />
-        <AdminKpi label="Prêts à livrer / retirer" value={buckets.available} />
-        <AdminKpi label="Colis livrés" value={buckets.delivered} />
-        <AdminKpi
-          label="En retard sur estimation"
-          value={lateShipments.length}
-          alert={lateShipments.length > 0}
-        />
-        {settings.modules.finance && (
+        <AdminKpi label="Commandes" value={filteredOrders.length} />
+        <AdminKpi label="1. Reçus à Miami" value={receivedShipmentsCount} />
+        <AdminKpi label="2. Transit aérien (Rép. Dom.)" value={buckets.transit} />
+        <AdminKpi label="3. En bus vers Haïti" value={buckets.arrived} />
+        <AdminKpi label="Disponibles pour retrait" value={buckets.available + buckets.delivered} />
+        {settings.modules.finance && pendingPayments.count > 0 && (
           <AdminKpi
             label="Paiements en attente"
             value={pendingPayments.count}
             sub={formatMoney(pendingPayments.totalBalance, settings.currency)}
-            alert={pendingPayments.count > 0}
+            alert
           />
         )}
       </section>
-
-      {/* Alertes de retard */}
-      {lateShipments.length > 0 && (
-        <section className="rounded-2xl border border-orange-300 bg-orange-50 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-sm font-extrabold text-orange-950">
-            <AlertTriangle className="h-4 w-4 text-orange-600" aria-hidden="true" />
-            <span>Colis dont la date d&apos;arrivée estimée est dépassée ({lateShipments.length})</span>
-          </div>
-          <ul className="divide-y divide-orange-200/70 text-xs">
-            {lateShipments.slice(0, 6).map((s) => (
-              <li key={s.shipmentId} className="py-2 flex flex-wrap items-center justify-between gap-2">
-                <span>
-                  <strong>{s.trackingNumber}</strong> ({s.shipmentId}) — Client {s.clientId}
-                </span>
-                <span className="font-bold text-orange-900">
-                  Estimation : {formatIsoDate(s.dates.deliveryWindowEnd ?? s.dates.estimatedArrival)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
 
       {/* Tableaux récents */}
       <div className="grid gap-6 lg:grid-cols-12">

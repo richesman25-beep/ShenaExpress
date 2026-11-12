@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 160" role="img" aria-label="SHENA Express — Shipping, Logistique, Livraison">
+  <defs>
+    <linearGradient id="shenaSilver" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="35%" stop-color="#e2e8f0" />
+      <stop offset="60%" stop-color="#64748b" />
+      <stop offset="85%" stop-color="#f8fafc" />
+      <stop offset="100%" stop-color="#94a3b8" />
+    </linearGradient>
+    <linearGradient id="shenaTextSilver" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="60%" stop-color="#e2e8f0" />
+      <stop offset="100%" stop-color="#94a3b8" />
+    </linearGradient>
+    <linearGradient id="shenaOrange" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c2410c" />
+      <stop offset="50%" stop-color="#f97316" />
+      <stop offset="100%" stop-color="#fbbf24" />
+    </linearGradient>
+  </defs>
+
+  <!-- Symbole S métallique + trajectoire orange + avion -->
+  <g transform="translate(12, 10)">
+    <path
+      d="M112 30C84 25 54 34 50 56c-3 15 11 23 33 28 18 4 25 8 23 17-3 11-18 16-38 14-11-1-22-5-30-11l-10 20c11 8 26 13 44 14 33 3 59-11 63-34 4-18-8-29-33-34-18-4-25-8-23-16 2-8 14-12 30-11 8 1 16 4 23 8l7-21z"
+      fill="#060f1d"
+      transform="translate(4, 5)"
+      opacity="0.55"
+    />
+    <path
+      d="M112 30C84 25 54 34 50 56c-3 15 11 23 33 28 18 4 25 8 23 17-3 11-18 16-38 14-11-1-22-5-30-11l-10 20c11 8 26 13 44 14 33 3 59-11 63-34 4-18-8-29-33-34-18-4-25-8-23-16 2-8 14-12 30-11 8 1 16 4 23 8l7-21z"
+      fill="url(#shenaSilver)"
+      stroke="#cbd5e1"
+      stroke-width="1.5"
+    />
+    <path
+      d="M24 132C10 96 48 56 126 26c-52 30-82 67-74 101 2 5 4 9 8 12-14 2-26-1-36-7z"
+      fill="url(#shenaOrange)"
+    />
+    <g transform="translate(114, 6) rotate(-17)">
+      <path
+        d="M3 22L25 15L41 3L47 4L37 15L52 12C56 11 59 13 59 15C59 17 56 19 52 20L36 23L40 35L34 37L23 26L5 29L0 25L3 22Z"
+        fill="url(#shenaOrange)"
+      />
+      <path d="M25 15L41 3L44 3.5L32 15Z" fill="#ffffff" opacity="0.9" />
+    </g>
+  </g>
+
+  <!-- Texte SHENA -->
+  <text
+    x="185"
+    y="82"
+    font-family="Manrope, system-ui, -apple-system, sans-serif"
+    font-size="60"
+    font-weight="800"
+    font-style="italic"
+    letter-spacing="1"
+    fill="url(#shenaTextSilver)"
+  >
+    SHENA
+  </text>
+
+  <!-- 3 lignes de vitesse orange -->
+  <polygon points="190,100 248,100 245,105 187,105" fill="url(#shenaOrange)" />
+  <polygon points="182,112 245,112 242,117 179,117" fill="url(#shenaOrange)" />
+  <polygon points="195,124 242,124 239,129 192,129" fill="url(#shenaOrange)" />
+
+  <!-- Texte Express -->
+  <text
+    x="255"
+    y="128"
+    font-family="Manrope, system-ui, -apple-system, sans-serif"
+    font-size="48"
+    font-weight="800"
+    font-style="italic"
+    fill="url(#shenaOrange)"
+  >
+    Express
+  </text>
+
+  <!-- Arc orange inférieur -->
+  <path
+    d="M160 146 Q335 128 510 146 Q335 137 160 146 Z"
+    fill="url(#shenaOrange)"
+  />
+</svg>

@@ -18,25 +18,21 @@ import { api, formatError } from "@/lib/api";
 import {
   STATUS_CODES,
   STATUS_DEFINITIONS,
-  SHIPPED_STATUSES,
+  SHENA_PRIMARY_STATUSES,
   CURRENCIES,
   PERMISSIONS,
   PERMISSION_LABELS,
   NOTIFICATION_LABELS,
   PAYMENT_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
-  allocatedByLine,
-  lineKey,
+  nextLogisticsStatus,
   todayIso,
   formatIsoDate,
   parseMoney,
   formatMoney,
   type ClientDoc,
-  type OrderDoc,
   type ShipmentDoc,
-  type ShipmentDates,
   type StatusCode,
-  type TransportMode,
   type ChargeLine,
   type ChargeKind,
   type Currency,
@@ -46,10 +42,11 @@ import {
 } from "@shared/index";
 import {
   StatusBadge,
-  TransportBadge,
   ShipmentProgress,
+  PickupAvailabilityBanner,
   TrackingTimeline,
   Modal,
+  ConfirmDialog,
   EmptyState,
   useToast,
 } from "@/components/ui";
@@ -59,12 +56,11 @@ import { useAdminData } from "./AdminContext";
 export function AdminShipmentsPage() {
   const { can } = useAuth();
   const { labelForStatus } = useSettings();
-  const { clients, orders, shipments, events } = useAdminData();
+  const { clients, shipments, events } = useAdminData();
   const { notify } = useToast();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [transportFilter, setTransportFilter] = useState<string>("all");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<ShipmentDoc | null>(null);
@@ -72,28 +68,36 @@ export function AdminShipmentsPage() {
 
   const canWrite = can("shipments.write");
 
+  const clientById = useMemo(() => {
+    const map = new Map<string, ClientDoc>();
+    for (const c of clients) map.set(c.clientId, c);
+    return map;
+  }, [clients]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return shipments.filter((s) => {
       if (statusFilter !== "all" && s.status !== statusFilter) return false;
-      if (transportFilter !== "all" && s.transportMode !== transportFilter) return false;
       if (!q) return true;
+      const clientName = clientById.get(s.clientId)?.fullName.toLowerCase() ?? "";
       return (
         s.trackingNumber.toLowerCase().includes(q) ||
         s.shipmentId.toLowerCase().includes(q) ||
         s.clientId.toLowerCase().includes(q) ||
+        clientName.includes(q) ||
+        s.lines.some((l) => l.description.toLowerCase().includes(q)) ||
         s.orderIds.some((id) => id.toLowerCase().includes(q))
       );
     });
-  }, [shipments, search, statusFilter, transportFilter]);
+  }, [shipments, clientById, search, statusFilter]);
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Gestion des colis &amp; expéditions</h1>
+          <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Gestion des colis &amp; suivi logistique</h1>
           <p className="text-xs text-slate-600">
-            Regroupez ou répartissez les articles reçus en colis, définissez les dates estimées et mettez à jour le suivi.
+            Enregistrez les colis par numéro de suivi unique et pilotez les 3 étapes de transport SHENA Express jusqu&apos;à la disponibilité au retrait.
           </p>
         </div>
         {canWrite && (
@@ -110,7 +114,7 @@ export function AdminShipmentsPage() {
 
       {/* Filtres */}
       <div className="grid gap-3 sm:grid-cols-12 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-        <div className="sm:col-span-6 relative">
+        <div className="sm:col-span-8 relative">
           <label htmlFor="admin-ship-search" className="sr-only">
             Rechercher un colis
           </label>
@@ -118,15 +122,15 @@ export function AdminShipmentsPage() {
           <input
             id="admin-ship-search"
             type="search"
-            placeholder="Numéro de suivi, réf. colis, commande ou client…"
+            placeholder="Rechercher par numéro de suivi, client, référence ou description…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-xl border border-slate-300 ps-10 pe-3 py-2 text-sm"
           />
         </div>
-        <div className="sm:col-span-3">
+        <div className="sm:col-span-4">
           <label htmlFor="admin-ship-status" className="sr-only">
-            Statut
+            Étape logistique
           </label>
           <select
             id="admin-ship-status"
@@ -134,95 +138,83 @@ export function AdminShipmentsPage() {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
           >
-            <option value="all">Tous les statuts</option>
-            {STATUS_CODES.map((c) => (
+            <option value="all">Toutes les étapes logistiques</option>
+            {SHENA_PRIMARY_STATUSES.map((c) => (
               <option key={c} value={c}>
                 {labelForStatus(c)}
               </option>
             ))}
           </select>
         </div>
-        <div className="sm:col-span-3">
-          <label htmlFor="admin-ship-transport" className="sr-only">
-            Mode
-          </label>
-          <select
-            id="admin-ship-transport"
-            value={transportFilter}
-            onChange={(e) => setTransportFilter(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            <option value="all">Tous les modes</option>
-            <option value="air">Aérien</option>
-            <option value="sea">Maritime</option>
-          </select>
-        </div>
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState title="Aucun colis trouvé" description="Créez un colis pour organiser l'expédition des articles reçus." />
+        <EmptyState
+          title="Aucun colis trouvé"
+          description="Enregistrez un colis avec son numéro de suivi unique pour suivre son acheminement."
+        />
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                  <th className="py-3 px-4">Suivi / Réf.</th>
-                  <th className="py-3 px-4">Client / Commandes</th>
-                  <th className="py-3 px-4">Articles / Poids</th>
-                  <th className="py-3 px-4">Arrivée estimée</th>
-                  <th className="py-3 px-4">Statut actuel</th>
+                  <th className="py-3 px-4">Numéro de suivi</th>
+                  <th className="py-3 px-4">Client associé</th>
+                  <th className="py-3 px-4">Description / Référence</th>
+                  <th className="py-3 px-4">Étape logistique actuelle</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map((s) => (
-                  <tr key={s.shipmentId} className="hover:bg-slate-50/80">
-                    <td className="py-3 px-4">
-                      <div className="font-extrabold text-navy-900">{s.trackingNumber}</div>
-                      <div className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
-                        <span>{s.shipmentId}</span>
-                        <TransportBadge mode={s.transportMode} />
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-xs">
-                      <div className="font-bold text-slate-900">{s.clientId}</div>
-                      <div className="text-slate-500">{s.orderIds.join(", ") || "—"}</div>
-                    </td>
-                    <td className="py-3 px-4 text-xs">
-                      <div className="font-bold">{s.itemCount} article(s)</div>
-                      {s.weightKg ? <div className="text-slate-500">{s.weightKg} kg</div> : null}
-                    </td>
-                    <td className="py-3 px-4 text-xs font-semibold text-slate-700">
-                      {formatIsoDate(s.dates?.estimatedArrival)}
-                    </td>
-                    <td className="py-3 px-4">
-                      <StatusBadge status={s.status} size="sm" />
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setStatusModal(s)}
-                          className="inline-flex items-center gap-1 rounded-lg bg-blue-50 border border-blue-200 px-2.5 py-1 text-xs font-bold text-royal-700 hover:bg-blue-100"
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>Suivi</span>
-                        </button>
-                        {canWrite && (
+                {filtered.map((s) => {
+                  const client = clientById.get(s.clientId);
+                  return (
+                    <tr key={s.shipmentId} className="hover:bg-slate-50/80">
+                      <td className="py-3 px-4">
+                        <div className="font-extrabold text-navy-900 font-mono">{s.trackingNumber}</div>
+                        <div className="text-xs text-slate-500">{s.shipmentId}</div>
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        <div className="font-bold text-slate-900">{s.clientId}</div>
+                        {client && <div className="text-slate-500">{client.fullName}</div>}
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        <div className="font-semibold text-slate-900">
+                          {s.lines[0]?.description ?? "Colis SHENA Express"}
+                        </div>
+                        {s.orderIds.length > 0 && (
+                          <div className="text-slate-500">{s.orderIds.join(", ")}</div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <StatusBadge status={s.status} size="sm" />
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setEditing(s)}
-                            aria-label={`Modifier ${s.trackingNumber}`}
-                            className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
+                            onClick={() => setStatusModal(s)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-blue-50 border border-blue-200 px-2.5 py-1 text-xs font-bold text-royal-700 hover:bg-blue-100"
                           >
-                            <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
+                            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Suivi &amp; statut</span>
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {canWrite && (
+                            <button
+                              type="button"
+                              onClick={() => setEditing(s)}
+                              aria-label={`Modifier ${s.trackingNumber}`}
+                              className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -232,8 +224,6 @@ export function AdminShipmentsPage() {
       {(createOpen || editing) && (
         <ShipmentFormModal
           clients={clients}
-          orders={orders}
-          shipments={shipments}
           initial={editing}
           onClose={() => {
             setCreateOpen(false);
@@ -242,7 +232,10 @@ export function AdminShipmentsPage() {
           onSaved={(shipmentId) => {
             setCreateOpen(false);
             setEditing(null);
-            notify("success", shipmentId ? `Colis ${shipmentId} créé.` : "Colis et dates mis à jour.");
+            notify(
+              "success",
+              shipmentId ? `Colis ${shipmentId} enregistré avec succès.` : "Colis mis à jour avec succès.",
+            );
           }}
         />
       )}
@@ -250,6 +243,7 @@ export function AdminShipmentsPage() {
       {statusModal && (
         <ShipmentStatusModal
           shipment={statusModal}
+          client={clientById.get(statusModal.clientId) ?? null}
           events={events.filter((e) => e.shipmentId === statusModal.shipmentId)}
           onClose={() => setStatusModal(null)}
         />
@@ -260,52 +254,26 @@ export function AdminShipmentsPage() {
 
 function ShipmentFormModal({
   clients,
-  orders,
-  shipments,
   initial,
   onClose,
   onSaved,
 }: {
   clients: ClientDoc[];
-  orders: OrderDoc[];
-  shipments: ShipmentDoc[];
   initial: ShipmentDoc | null;
   onClose: () => void;
   onSaved: (shipmentId?: string) => void;
 }) {
+  const { labelForStatus } = useSettings();
   const [clientId, setClientId] = useState(
     initial?.clientId ?? clients.find((c) => c.status === "active")?.clientId ?? "",
   );
   const [trackingNumber, setTrackingNumber] = useState(initial?.trackingNumber ?? "");
-  const [transportMode, setTransportMode] = useState<TransportMode>(initial?.transportMode ?? "air");
-  const [weightStr, setWeightStr] = useState(initial?.weightKg ? String(initial.weightKg) : "");
-  const [dimL, setDimL] = useState(initial?.dimensionsCm ? String(initial.dimensionsCm.length) : "");
-  const [dimW, setDimW] = useState(initial?.dimensionsCm ? String(initial.dimensionsCm.width) : "");
-  const [dimH, setDimH] = useState(initial?.dimensionsCm ? String(initial.dimensionsCm.height) : "");
-
-  const [dates, setDates] = useState<ShipmentDates>(() => ({
-    warehouseReceivedAt: initial?.dates?.warehouseReceivedAt ?? null,
-    estimatedDeparture: initial?.dates?.estimatedDeparture ?? null,
-    shippedAt: initial?.dates?.shippedAt ?? null,
-    estimatedArrival: initial?.dates?.estimatedArrival ?? null,
-    deliveryWindowStart: initial?.dates?.deliveryWindowStart ?? null,
-    deliveryWindowEnd: initial?.dates?.deliveryWindowEnd ?? null,
-    availableAt: initial?.dates?.availableAt ?? null,
-    deliveredAt: initial?.dates?.deliveredAt ?? null,
-  }));
-  const [dateChangeMessage, setDateChangeMessage] = useState(initial?.dateChangeMessage ?? "");
-  const [pickupInstructions, setPickupInstructions] = useState(initial?.pickupInstructions ?? "");
+  const [orderRef, setOrderRef] = useState(initial?.orderIds[0] ?? "");
+  const [description, setDescription] = useState(initial?.lines[0]?.description ?? "");
+  const [initialStatus, setInitialStatus] = useState<StatusCode>(
+    initial && SHENA_PRIMARY_STATUSES.includes(initial.status) ? initial.status : "received",
+  );
   const [internalNotes, setInternalNotes] = useState("");
-
-  // Quantités sélectionnées par clé orderId::lineId
-  const [allocations, setAllocations] = useState<Record<string, number>>(() => {
-    const map: Record<string, number> = {};
-    for (const l of initial?.lines ?? []) {
-      map[lineKey(l.orderId, l.lineId)] = l.quantity;
-    }
-    return map;
-  });
-
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -318,62 +286,57 @@ function ShipmentFormModal({
       .catch(() => undefined);
   }, [initial]);
 
-  const alreadyAllocated = useMemo(
-    () => allocatedByLine(shipments, initial?.shipmentId),
-    [shipments, initial?.shipmentId],
-  );
-
-  const clientOrders = useMemo(
-    () => orders.filter((o) => o.clientId === clientId && o.status !== "cancelled"),
-    [orders, clientId],
-  );
-
-  const contentLocked = initial ? SHIPPED_STATUSES.includes(initial.status) : false;
-
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    const cleanTracking = trackingNumber.trim().toUpperCase();
+    if (!cleanTracking) {
+      setError("Le numéro de suivi unique est obligatoire.");
+      return;
+    }
     setBusy(true);
     try {
-      const lines: { orderId: string; lineId: string; quantity: number }[] = [];
-      for (const [k, qty] of Object.entries(allocations)) {
-        if (qty > 0) {
-          const [orderId, lineId] = k.split("::") as [string, string];
-          lines.push({ orderId, lineId, quantity: Number(qty) });
-        }
-      }
-
-      const dimensionsCm =
-        dimL && dimW && dimH
-          ? { length: Number(dimL), width: Number(dimW), height: Number(dimH) }
-          : null;
-
       if (initial) {
         await api.updateShipment({
           shipmentId: initial.shipmentId,
-          trackingNumber: trackingNumber.trim() || null,
-          transportMode,
-          weightKg: weightStr.trim() ? Number(weightStr) : null,
-          dimensionsCm,
-          lines,
-          dates,
-          dateChangeMessage: dateChangeMessage || null,
-          pickupInstructions: pickupInstructions || null,
-          internalNotes: internalNotes || null,
+          trackingNumber: cleanTracking,
+          initialStatus,
+          orderRef: orderRef.trim() || null,
+          description: description.trim() || `Colis ${cleanTracking}`,
+          transportMode: initial.transportMode ?? "air",
+          weightKg: initial.weightKg ?? null,
+          dimensionsCm: initial.dimensionsCm ?? null,
+          lines: initial.lines,
+          dates: initial.dates,
+          dateChangeMessage: null,
+          pickupInstructions: initial.pickupInstructions ?? null,
+          internalNotes: internalNotes.trim() || null,
         });
         onSaved();
       } else {
         const res = await api.createShipment({
           clientId,
-          trackingNumber: trackingNumber.trim() || null,
-          transportMode,
-          weightKg: weightStr.trim() ? Number(weightStr) : null,
-          dimensionsCm,
-          lines,
-          dates,
-          dateChangeMessage: dateChangeMessage || null,
-          pickupInstructions: pickupInstructions || null,
-          internalNotes: internalNotes || null,
+          trackingNumber: cleanTracking,
+          initialStatus,
+          orderRef: orderRef.trim() || null,
+          description: description.trim() || `Colis ${cleanTracking}`,
+          transportMode: "air",
+          weightKg: null,
+          dimensionsCm: null,
+          lines: [],
+          dates: {
+            warehouseReceivedAt: null,
+            estimatedDeparture: null,
+            shippedAt: null,
+            estimatedArrival: null,
+            deliveryWindowStart: null,
+            deliveryWindowEnd: null,
+            availableAt: null,
+            deliveredAt: null,
+          },
+          dateChangeMessage: null,
+          pickupInstructions: null,
+          internalNotes: internalNotes.trim() || null,
         });
         onSaved(res.shipmentId);
       }
@@ -386,9 +349,9 @@ function ShipmentFormModal({
 
   return (
     <Modal
-      title={initial ? `Modifier colis ${initial.trackingNumber}` : "Créer un colis"}
+      title={initial ? `Modifier colis ${initial.trackingNumber}` : "Enregistrer un nouveau colis"}
       onClose={onClose}
-      maxWidth="max-w-3xl"
+      maxWidth="max-w-xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
@@ -397,248 +360,98 @@ function ShipmentFormModal({
           </div>
         )}
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div>
-            <label htmlFor="sf-client" className="block text-xs font-bold text-slate-700 mb-1">
-              Client propriétaire *
-            </label>
-            <select
-              id="sf-client"
-              required
-              disabled={Boolean(initial)}
-              value={clientId}
-              onChange={(e) => {
-                setClientId(e.target.value);
-                setAllocations({});
-              }}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold disabled:bg-slate-100"
-            >
-              <option value="">Sélectionner…</option>
-              {clients.map((c) => (
-                <option key={c.clientId} value={c.clientId}>
-                  {c.clientId} — {c.fullName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="sf-tn" className="block text-xs font-bold text-slate-700 mb-1">
-              Numéro de suivi (auto si vide)
-            </label>
-            <input
-              id="sf-tn"
-              placeholder="Ex. SHX26000001"
-              value={trackingNumber}
-              onChange={(e) => setTrackingNumber(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
-            />
-          </div>
-          <div>
-            <label htmlFor="sf-mode" className="block text-xs font-bold text-slate-700 mb-1">
-              Mode de transport *
-            </label>
-            <select
-              id="sf-mode"
-              value={transportMode}
-              onChange={(e) => setTransportMode(e.target.value as TransportMode)}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold"
-            >
-              <option value="air">Aérien</option>
-              <option value="sea">Maritime</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Poids et dimensions */}
-        <div className="grid gap-3 sm:grid-cols-4">
-          <div>
-            <label htmlFor="sf-weight" className="block text-xs font-bold text-slate-700 mb-1">
-              Poids (kg)
-            </label>
-            <input
-              id="sf-weight"
-              type="number"
-              step="0.01"
-              min="0"
-              value={weightStr}
-              onChange={(e) => setWeightStr(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-1.5 text-xs"
-            />
-          </div>
-          <div>
-            <label htmlFor="sf-diml" className="block text-xs font-bold text-slate-700 mb-1">
-              Longueur (cm)
-            </label>
-            <input
-              id="sf-diml"
-              type="number"
-              min="0"
-              value={dimL}
-              onChange={(e) => setDimL(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-1.5 text-xs"
-            />
-          </div>
-          <div>
-            <label htmlFor="sf-dimw" className="block text-xs font-bold text-slate-700 mb-1">
-              Largeur (cm)
-            </label>
-            <input
-              id="sf-dimw"
-              type="number"
-              min="0"
-              value={dimW}
-              onChange={(e) => setDimW(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-1.5 text-xs"
-            />
-          </div>
-          <div>
-            <label htmlFor="sf-dimh" className="block text-xs font-bold text-slate-700 mb-1">
-              Hauteur (cm)
-            </label>
-            <input
-              id="sf-dimh"
-              type="number"
-              min="0"
-              value={dimH}
-              onChange={(e) => setDimH(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-1.5 text-xs"
-            />
-          </div>
-        </div>
-
-        {/* Répartition des articles reçus dans ce colis */}
-        <div className="rounded-xl border border-slate-200 p-3.5 space-y-2">
-          <div className="text-xs font-bold text-navy-900 uppercase">
-            Articles contenus dans ce colis (issus des quantités effectivement reçues)
-          </div>
-          {contentLocked && (
-            <p className="text-xs text-amber-800">
-              Le contenu est verrouillé car ce colis a déjà été expédié.
-            </p>
-          )}
-          {clientOrders.length === 0 ? (
-            <p className="text-xs text-slate-500">Aucune commande active pour ce client.</p>
-          ) : (
-            <div className="space-y-2 max-h-44 overflow-y-auto">
-              {clientOrders.map((o) => (
-                <div key={o.orderId} className="space-y-1">
-                  <div className="text-xs font-bold text-slate-700">{o.orderId}</div>
-                  {o.items.map((item) => {
-                    const k = lineKey(o.orderId, item.lineId);
-                    const otherPacked = alreadyAllocated.get(k) ?? 0;
-                    const maxAvailable = Math.max(0, item.quantityReceived - otherPacked);
-                    const currentQty = allocations[k] ?? 0;
-                    return (
-                      <div key={k} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
-                        <span>
-                          <strong>{item.description}</strong> — Reçu : {item.quantityReceived}, disponible à emballer :{" "}
-                          <strong>{maxAvailable}</strong>
-                        </span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={maxAvailable}
-                          disabled={contentLocked || maxAvailable === 0}
-                          value={currentQty}
-                          onChange={(e) => setAllocations((p) => ({ ...p, [k]: Number(e.target.value) }))}
-                          aria-label={`Quantité de ${item.description} dans ce colis`}
-                          className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1 text-right font-bold"
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Dates de livraison et estimations */}
-        <div className="rounded-xl border border-slate-200 p-3.5 space-y-3">
-          <div className="text-xs font-bold text-navy-900 uppercase">
-            Dates logistiques &amp; estimations (présentées comme estimations au client)
-          </div>
-          <div className="grid gap-2.5 sm:grid-cols-4 text-xs">
-            <DateInput
-              label="Réception entrepôt"
-              value={dates.warehouseReceivedAt}
-              onChange={(v) => setDates((p) => ({ ...p, warehouseReceivedAt: v }))}
-            />
-            <DateInput
-              label="Départ estimé"
-              value={dates.estimatedDeparture}
-              onChange={(v) => setDates((p) => ({ ...p, estimatedDeparture: v }))}
-            />
-            <DateInput
-              label="Date d'expédition"
-              value={dates.shippedAt}
-              onChange={(v) => setDates((p) => ({ ...p, shippedAt: v }))}
-            />
-            <DateInput
-              label="Arrivée estimée"
-              value={dates.estimatedArrival}
-              onChange={(v) => setDates((p) => ({ ...p, estimatedArrival: v }))}
-            />
-            <DateInput
-              label="Plage livraison (début)"
-              value={dates.deliveryWindowStart}
-              onChange={(v) => setDates((p) => ({ ...p, deliveryWindowStart: v }))}
-            />
-            <DateInput
-              label="Plage livraison (fin)"
-              value={dates.deliveryWindowEnd}
-              onChange={(v) => setDates((p) => ({ ...p, deliveryWindowEnd: v }))}
-            />
-            <DateInput
-              label="Disponible pour retrait"
-              value={dates.availableAt}
-              onChange={(v) => setDates((p) => ({ ...p, availableAt: v }))}
-            />
-            <DateInput
-              label="Livraison effective"
-              value={dates.deliveredAt}
-              onChange={(v) => setDates((p) => ({ ...p, deliveredAt: v }))}
-            />
-          </div>
-          <div>
-            <label htmlFor="sf-datemsg" className="block text-xs font-bold text-slate-700 mb-1">
-              Message explicatif public (affiché si une date estimée change)
-            </label>
-            <input
-              id="sf-datemsg"
-              placeholder="Ex. Nouveau vol prévu vendredi suite aux conditions météo."
-              value={dateChangeMessage}
-              onChange={(e) => setDateChangeMessage(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-1.5 text-xs"
-            />
-          </div>
+        <div>
+          <label htmlFor="sf-client" className="block text-xs font-bold text-slate-700 mb-1">
+            Client associé *
+          </label>
+          <select
+            id="sf-client"
+            required
+            disabled={Boolean(initial)}
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
+          >
+            <option value="">Sélectionner un client…</option>
+            {clients.map((c) => (
+              <option key={c.clientId} value={c.clientId}>
+                {c.clientId} — {c.fullName}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label htmlFor="sf-pickup" className="block text-xs font-bold text-slate-700 mb-1">
-              Instructions de retrait ou de livraison (visibles par le client)
+            <label htmlFor="sf-tn" className="block text-xs font-bold text-slate-700 mb-1">
+              Numéro de suivi unique *
             </label>
-            <textarea
-              id="sf-pickup"
-              rows={2}
-              value={pickupInstructions}
-              onChange={(e) => setPickupInstructions(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
+            <input
+              id="sf-tn"
+              required
+              placeholder="Ex. SHX26000001"
+              value={trackingNumber}
+              onChange={(e) => setTrackingNumber(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase font-mono"
             />
           </div>
           <div>
-            <label htmlFor="sf-notes" className="block text-xs font-bold text-slate-700 mb-1">
-              Notes internes privées (invisibles pour le client)
+            <label htmlFor="sf-oref" className="block text-xs font-bold text-slate-700 mb-1">
+              Référence de la commande (facultative)
             </label>
-            <textarea
-              id="sf-notes"
-              rows={2}
-              value={internalNotes}
-              onChange={(e) => setInternalNotes(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
+            <input
+              id="sf-oref"
+              placeholder="Ex. SHE-CMD-2026-00001 ou AMZ-114"
+              value={orderRef}
+              onChange={(e) => setOrderRef(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
+        </div>
+
+        <div>
+          <label htmlFor="sf-desc" className="block text-xs font-bold text-slate-700 mb-1">
+            Description courte du colis (facultative)
+          </label>
+          <input
+            id="sf-desc"
+            placeholder="Ex. Vêtements, électronique, chaussures…"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="sf-status" className="block text-xs font-bold text-slate-700 mb-1">
+            Statut logistique initial *
+          </label>
+          <select
+            id="sf-status"
+            value={initialStatus}
+            onChange={(e) => setInitialStatus(e.target.value as StatusCode)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-navy-900"
+          >
+            {SHENA_PRIMARY_STATUSES.map((code) => (
+              <option key={code} value={code}>
+                {labelForStatus(code)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="sf-notes" className="block text-xs font-bold text-slate-700 mb-1">
+            Notes internes privées (facultatives — réservées à l&apos;administrateur)
+          </label>
+          <textarea
+            id="sf-notes"
+            rows={2}
+            value={internalNotes}
+            onChange={(e) => setInternalNotes(e.target.value)}
+            placeholder="Instructions internes invisibles pour le client…"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
+          />
         </div>
 
         <div className="flex justify-end gap-2">
@@ -654,7 +467,7 @@ function ShipmentFormModal({
             disabled={busy}
             className="rounded-xl bg-royal-600 px-4 py-2 text-xs font-bold text-white hover:bg-royal-700"
           >
-            {busy ? "Enregistrement…" : initial ? "Enregistrer" : "Créer le colis"}
+            {busy ? "Enregistrement…" : initial ? "Enregistrer" : "Enregistrer le colis"}
           </button>
         </div>
       </form>
@@ -662,34 +475,14 @@ function ShipmentFormModal({
   );
 }
 
-function DateInput({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string | null | undefined;
-  onChange: (next: string | null) => void;
-}) {
-  return (
-    <div>
-      <label className="block font-semibold text-slate-600 mb-1">{label}</label>
-      <input
-        type="date"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs"
-      />
-    </div>
-  );
-}
-
 function ShipmentStatusModal({
   shipment,
+  client,
   events,
   onClose,
 }: {
   shipment: ShipmentDoc;
+  client: ClientDoc | null;
   events: Parameters<typeof TrackingTimeline>[0]["events"];
   onClose: () => void;
 }) {
@@ -701,7 +494,12 @@ function ShipmentStatusModal({
   const [publicNote, setPublicNote] = useState("");
   const [internalNote, setInternalNote] = useState("");
   const [internalNotesById, setInternalNotesById] = useState<Record<string, string>>({});
+  const [confirmNextStatus, setConfirmNextStatus] = useState<StatusCode | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setStatus(shipment.status);
+  }, [shipment.status]);
 
   useEffect(() => {
     getDocs(collection(getFirebaseDb(), "shipmentEventsPrivate"))
@@ -716,20 +514,20 @@ function ShipmentStatusModal({
       .catch(() => undefined);
   }, [events.length]);
 
-  const handleUpdate = async (e: FormEvent) => {
-    e.preventDefault();
+  const executeStatusUpdate = async (targetStatus: StatusCode) => {
     setBusy(true);
     try {
       await api.updateStatus({
         targetType: "shipment",
         targetId: shipment.shipmentId,
-        status,
+        status: targetStatus,
         publicNote: publicNote || null,
         internalNote: internalNote || null,
       });
-      notify("success", `Statut du colis ${shipment.trackingNumber} mis à jour.`);
+      notify("success", `Statut du colis ${shipment.trackingNumber} mis à jour : ${labelForStatus(targetStatus)}.`);
       setPublicNote("");
       setInternalNote("");
+      setConfirmNextStatus(null);
     } catch (err) {
       notify("error", formatError(err));
     } finally {
@@ -737,28 +535,94 @@ function ShipmentStatusModal({
     }
   };
 
+  const nextStep = nextLogisticsStatus(shipment.status);
+
   return (
     <Modal title={`Suivi colis ${shipment.trackingNumber}`} onClose={onClose} maxWidth="max-w-2xl">
       <div className="space-y-5">
+        {/* Récapitulatif du colis et du client associé */}
+        <div className="grid sm:grid-cols-3 gap-2.5 rounded-xl bg-slate-50 border border-slate-200 p-3.5 text-xs">
+          <div>
+            <span className="text-slate-500 block">Client associé :</span>
+            <strong className="text-navy-900">
+              {shipment.clientId}
+              {client ? ` — ${client.fullName}` : ""}
+            </strong>
+          </div>
+          <div>
+            <span className="text-slate-500 block">Numéro de suivi :</span>
+            <strong className="text-navy-900 font-mono">{shipment.trackingNumber}</strong>
+          </div>
+          <div>
+            <span className="text-slate-500 block">Statut actuel :</span>
+            <div className="mt-0.5">
+              <StatusBadge status={shipment.status} size="sm" />
+            </div>
+          </div>
+        </div>
+
+        <PickupAvailabilityBanner status={shipment.status} />
         <ShipmentProgress status={shipment.status} lastStep={shipment.lastStep} />
 
         {can("shipments.write") && (
-          <form onSubmit={handleUpdate} className="rounded-xl border border-slate-200 p-4 space-y-3">
-            <div className="text-xs font-bold text-navy-900 uppercase">Enregistrer un changement de statut</div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setConfirmNextStatus(status);
+            }}
+            className="rounded-xl border border-slate-200 p-4 space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-navy-900 uppercase">
+                Progression logistique &amp; disponibilité au retrait
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {nextStep && nextStep !== "available" && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmNextStatus(nextStep)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-orange-500 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-orange-600"
+                  >
+                    <span>Étape suivante : {labelForStatus(nextStep)}</span>
+                  </button>
+                )}
+                {shipment.status !== "available" && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmNextStatus("available")}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700"
+                  >
+                    <span>Marquer Disponible pour le retrait</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as StatusCode)}
               className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold"
             >
-              {STATUS_CODES.filter((c) => !settings.disabledStatuses?.includes(c)).map((c) => (
-                <option key={c} value={c}>
-                  {labelForStatus(c)}
-                </option>
-              ))}
+              <optgroup label="Étapes logistiques SHENA Express">
+                {SHENA_PRIMARY_STATUSES.map((c) => (
+                  <option key={c} value={c}>
+                    {labelForStatus(c)}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Autres statuts / corrections">
+                {STATUS_CODES.filter(
+                  (c) => !SHENA_PRIMARY_STATUSES.includes(c) && !settings.disabledStatuses?.includes(c),
+                ).map((c) => (
+                  <option key={c} value={c}>
+                    {labelForStatus(c)}
+                  </option>
+                ))}
+              </optgroup>
             </select>
             <div className="grid gap-2 sm:grid-cols-2">
               <input
-                placeholder="Note publique destinée au client"
+                placeholder="Note publique destinée au client (facultative)"
                 value={publicNote}
                 onChange={(e) => setPublicNote(e.target.value)}
                 className="rounded-xl border border-slate-300 px-3 py-2 text-xs"
@@ -786,6 +650,22 @@ function ShipmentStatusModal({
           <div className="text-xs font-bold text-navy-900 uppercase">Chronologie complète (avec notes internes)</div>
           <TrackingTimeline events={events} internalNotesById={internalNotesById} />
         </div>
+
+        <ConfirmDialog
+          open={Boolean(confirmNextStatus)}
+          title="Confirmer la mise à jour du statut ?"
+          description={
+            confirmNextStatus
+              ? `Confirmez-vous le passage du colis ${shipment.trackingNumber} (client ${shipment.clientId}) au statut « ${labelForStatus(confirmNextStatus)} » ?`
+              : ""
+          }
+          confirmLabel="Confirmer et enregistrer"
+          busy={busy}
+          onCancel={() => setConfirmNextStatus(null)}
+          onConfirm={() => {
+            if (confirmNextStatus) void executeStatusUpdate(confirmNextStatus);
+          }}
+        />
       </div>
     </Modal>
   );
