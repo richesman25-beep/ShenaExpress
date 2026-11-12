@@ -117,9 +117,15 @@ export function AdminClientsPage() {
     if (!inspectingId) return;
     setPrivateNotes("");
     setAccessFeedback(null);
-    getDoc(doc(getFirebaseDb(), "clientNotes", inspectingId))
+    getDoc(doc(getFirebaseDb(), "clientPrivate", inspectingId))
       .then((snap) => {
-        if (snap.exists()) setPrivateNotes((snap.data().notes as string) ?? "");
+        if (snap.exists()) {
+          setPrivateNotes((snap.data().notes as string) ?? "");
+          return;
+        }
+        return getDoc(doc(getFirebaseDb(), "clientNotes", inspectingId)).then((legacy) => {
+          if (legacy.exists()) setPrivateNotes((legacy.data().notes as string) ?? "");
+        });
       })
       .catch(() => undefined);
   }, [inspectingId]);

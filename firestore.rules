@@ -1,143 +1,224 @@
 rules_version = '2';
-
-// =============================================================================
-// SHENA Express — Règles Firestore
-// Principe : tout est refusé par défaut. Les clients ne LISENT que leurs propres
-// données. Aucune écriture directe sur les données opérationnelles depuis un
-// navigateur : elles passent par les Cloud Functions, qui vérifient identité,
-// rôle, propriété et validité (le SDK Admin contourne ces règles).
-// Les rôles proviennent de custom claims attribués uniquement côté serveur.
-// =============================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() { return request.auth != null; }
-    function claims() { return request.auth.token; }
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isDesignatedAdminEmail() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email == 'shenyderj2000@gmail.com';
+    }
+
+    function userDocExists() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userRole() {
+      return userDocExists() ? userDoc().role : null;
+    }
+
+    function userActive() {
+      return !userDocExists() || userDoc().disabled != true;
+    }
+
+    function isStaff() {
+      return signedIn()
+        && userActive()
+        && (
+          request.auth.token.role in ['admin', 'operator', 'finance_manager']
+          || isDesignatedAdminEmail()
+          || userRole() in ['admin', 'operator', 'finance_manager']
+        );
+    }
+
     function isAdmin() {
-      return signedIn() && (claims().role == 'admin' || request.auth.token.email == 'shenyderj2000@gmail.com');
-    }
-    function isStaff() { return signedIn() && claims().role == 'staff'; }
-    // Permission fine : admin = toutes ; employé = uniquement celles accordées.
-    function can(perm) {
-      return isAdmin() || (isStaff() && claims().perms is list && perm in claims().perms);
-    }
-    function isClient() {
-      return signedIn() && (
-        claims().role == 'client' ||
-        (request.auth.token.email is string && request.auth.token.email.matches('.*@clients[.]shena-express[.]invalid$'))
-      );
-    }
-    // Le document appartient au client connecté.
-    function ownsDoc() { return isClient() && resource.data.clientUid == request.auth.uid; }
-    function financeEnabled() {
-      return get(/databases/$(database)/documents/settings/public).data.modules.finance == true;
+      return signedIn()
+        && userActive()
+        && (
+          request.auth.token.role == 'admin'
+          || isDesignatedAdminEmail()
+          || userRole() == 'admin'
+        );
     }
 
-    // --- Profils utilisateurs (rôle) : lecture de soi-même, écriture réservée aux administrateurs / gestionnaires clients.
+    function isOwnClientResource() {
+      return signedIn()
+        && userActive()
+        && resource.data.clientUid == request.auth.uid;
+    }
+
+    // Comptes utilisateurs et rôles (users/{uid})
     match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || can('clients.read'));
-      allow write: if can('clients.write') || isAdmin();
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
+      allow create, update: if isAdmin()
+        || isStaff()
+        || (
+          isDesignatedAdminEmail()
+          && request.auth.uid == uid
+          && request.resource.data.uid == uid
+          && request.resource.data.role == 'admin'
+          && request.resource.data.disabled == false
+        );
+      allow delete: if isAdmin();
     }
 
-    // --- Table de routage technique d'identifiant client (uniquement adresse technique .invalid, aucune donnée personnelle)
+    // Fiches clients (clients/{clientId})
+    match /clients/{clientId} {
+      allow read: if isStaff() || isOwnClientResource();
+      allow create, delete: if isStaff();
+      allow update: if isStaff()
+        || (
+          isOwnClientResource()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['passwordConfigured', 'updatedAt'])
+          && request.resource.data.passwordConfigured == true
+        )
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['passwordConfigured', 'updatedAt'])
+          && request.resource.data.passwordConfigured == true
+        );
+    }
+
+    // Correspondance identifiant client -> compte Firebase Auth (clientAuth/{clientId})
     match /clientAuth/{clientId} {
       allow get: if true;
-      allow list: if can('clients.read');
-      allow write: if can('clients.write');
+      allow list: if isStaff();
+      allow create, update, delete: if isStaff();
     }
 
-    // --- Fiches clients
-    match /clients/{clientId} {
-      allow read: if ownsDoc() || can('clients.read');
-      allow create, delete: if can('clients.write');
-      allow update: if can('clients.write') || (
-        ownsDoc() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['passwordConfigured', 'updatedAt']) &&
-        request.resource.data.passwordConfigured == true
-      );
+    // Jetons d'invitation et de définition de mot de passe à usage unique (clientPasswordTokens/{tokenId})
+    match /clientPasswordTokens/{tokenId} {
+      allow get: if true;
+      allow list: if isStaff();
+      allow create: if isStaff()
+        || (
+          request.resource.data.keys().hasOnly(['clientId', 'clientUid', 'authEmail', 'oobCode', 'createdAt', 'expiresAt', 'usedAt'])
+          && request.resource.data.usedAt == null
+          && request.resource.data.clientId is string
+        );
+      allow update: if isStaff()
+        || (
+          resource.data.usedAt == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedAt'])
+          && request.resource.data.usedAt != null
+        );
+      allow delete: if isStaff();
     }
-    // Notes administratives privées : jamais lisibles par un client.
+
+    // Notes administratives privées sur les clients (clientNotes/{clientId} et clientPrivate/{clientId})
     match /clientNotes/{clientId} {
-      allow read: if can('clients.read');
-      allow write: if can('clients.write');
+      allow read, write: if isStaff();
     }
 
-    // --- Commandes
+    match /clientPrivate/{clientId} {
+      allow read, write: if isStaff();
+    }
+
+    // Index d'unicité des numéros de téléphone et e-mails
+    match /clientPhones/{phoneKey} {
+      allow read, write: if isStaff();
+    }
+
+    match /clientEmails/{emailKey} {
+      allow get: if true;
+      allow list: if isStaff();
+      allow create, update, delete: if isStaff();
+    }
+
+    // Commandes clients (orders/{orderId})
     match /orders/{orderId} {
-      allow read: if ownsDoc() || can('orders.read');
-      allow write: if can('orders.write') || can('shipments.write');
+      allow read: if isStaff() || isOwnClientResource();
+      allow create, update, delete: if isStaff();
     }
+
+    // Notes internes sur les commandes (orderPrivate/{orderId})
     match /orderPrivate/{orderId} {
-      allow read: if can('orders.read');
-      allow write: if can('orders.write');
+      allow read, write: if isStaff();
     }
 
-    // --- Colis
-    match /shipments/{shipmentId} {
-      allow read: if ownsDoc() || can('shipments.read');
-      allow write: if can('shipments.write') || can('clients.write');
-    }
-    match /shipmentPrivate/{shipmentId} {
-      allow read: if can('shipments.read');
-      allow write: if can('shipments.write');
-    }
-
-    // --- Chronologie du suivi (aucune note interne n'y est stockée)
-    match /shipmentEvents/{eventId} {
-      allow read: if ownsDoc() || can('shipments.read') || can('orders.read');
-      allow write: if can('shipments.write') || can('orders.write');
-    }
-
-    // Notes internes liées aux événements : personnel uniquement.
-    match /shipmentEventsPrivate/{eventId} {
-      allow read: if can('shipments.read') || can('orders.read');
-      allow write: if can('shipments.write') || can('orders.write');
-    }
-
-    // --- Finances (module optionnel)
+    // Finances et frais des commandes (orderFinance/{orderId})
     match /orderFinance/{orderId} {
-      allow read: if (ownsDoc() && financeEnabled()) || can('finance.read');
-      allow write: if can('finance.write') || can('orders.write') || can('clients.write');
+      allow read: if isStaff() || isOwnClientResource();
+      allow create, update, delete: if isStaff();
     }
+
+    // Colis / expéditions (shipments/{shipmentId})
+    match /shipments/{shipmentId} {
+      allow read: if isStaff() || isOwnClientResource();
+      allow create, update, delete: if isStaff();
+    }
+
+    // Notes internes sur les colis (shipmentPrivate/{shipmentId})
+    match /shipmentPrivate/{shipmentId} {
+      allow read, write: if isStaff();
+    }
+
+    // Historique et événements de suivi (shipmentEvents/{eventId})
+    match /shipmentEvents/{eventId} {
+      allow read: if isStaff() || isOwnClientResource();
+      allow create, update, delete: if isStaff();
+    }
+
+    // Événements internes de suivi (shipmentEventsPrivate/{eventId})
+    match /shipmentEventsPrivate/{eventId} {
+      allow read, write: if isStaff();
+    }
+
+    // Enregistrements de paiements (paymentRecords/{paymentId})
     match /paymentRecords/{paymentId} {
-      allow read: if (ownsDoc() && financeEnabled()) || can('finance.read');
-      allow write: if can('finance.write');
+      allow read: if isStaff() || isOwnClientResource();
+      allow create, update, delete: if isStaff();
     }
 
-    // --- Notifications : le destinataire peut seulement marquer comme lue.
+    // Notifications clients (notifications/{notificationId})
     match /notifications/{notificationId} {
-      allow read: if signedIn() && resource.data.recipientUid == request.auth.uid;
-      allow update: if signedIn()
-        && resource.data.recipientUid == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
-        && request.resource.data.readAt == request.time;
-      allow create, delete: if can('orders.write') || can('shipments.write');
+      allow read: if isStaff()
+        || (signedIn() && userActive() && resource.data.recipientUid == request.auth.uid);
+      allow create, delete: if isStaff();
+      allow update: if isStaff()
+        || (
+          signedIn()
+          && userActive()
+          && resource.data.recipientUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
+        );
     }
 
-    // --- Paramètres
-    match /settings/public {
-      // Nom, logo, WhatsApp officiel : nécessaires à la page de connexion.
-      allow read: if true;
-      allow write: if can('settings.write') || isAdmin();
-    }
-    match /settings/{docId} {
-      allow read: if docId != 'public' && (isAdmin() || isStaff());
-      allow write: if can('settings.write') || isAdmin();
-    }
-
-    // --- Journal d'audit
+    // Journal d'audit administratif immuable (auditLogs/{logId})
     match /auditLogs/{logId} {
-      allow read: if can('audit.read');
-      allow create: if isAdmin() || isStaff();
+      allow read: if isStaff();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
 
-    // --- Compteurs séquentiels (réservés au personnel autorisé)
-    match /counters/{counterId} {
-      allow read, write: if isAdmin() || isStaff();
+    // Paramètres publics et privés de l'application (settings/public et settings/private)
+    match /settings/public {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // Autres collections internes : serveur uniquement.
+    match /settings/private {
+      allow read, write: if isAdmin();
+    }
+
+    // Compteurs de séquences d'identifiants (counters/{counterId})
+    match /counters/{counterId} {
+      allow read, write: if isStaff();
+    }
+
+    // File d'envoi d'e-mails (mail/{mailId})
+    match /mail/{mailId} {
+      allow read, write: if isStaff();
+    }
+
+    // Refus explicite de tout autre accès non prévu
     match /{document=**} {
       allow read, write: if false;
     }

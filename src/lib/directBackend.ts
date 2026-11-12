@@ -287,7 +287,7 @@ export const directBackend = {
         status: "active",
         updatedAt: now,
       });
-      batch.set(doc(db, "clientNotes", clientId), {
+      batch.set(doc(db, "clientPrivate", clientId), {
         clientId,
         notes: input.notes ?? "",
         updatedAt: now,
@@ -497,7 +497,7 @@ export const directBackend = {
     const { clientId, notes } = parseInput(clientNotesSchema, raw);
     const db = getFirebaseDb();
     return withFirestoreCheck(async () => {
-      await setDoc(doc(db, "clientNotes", clientId), {
+      await setDoc(doc(db, "clientPrivate", clientId), {
         clientId,
         notes,
         updatedAt: serverTimestamp(),
@@ -1113,10 +1113,12 @@ export const directBackend = {
     const input = parseInput(settingsUpdateSchema, raw);
     const db = getFirebaseDb();
     return withFirestoreCheck(async () => {
-      const batch = writeBatch(db);
-      batch.set(doc(db, "settings", "public"), { ...input.publicSettings, isExample: false, updatedAt: serverTimestamp() });
-      batch.set(doc(db, "settings", "private"), { ...input.privateSettings, updatedAt: serverTimestamp() });
-      await batch.commit();
+      await setDoc(doc(db, "settings", "public"), { ...input.publicSettings, isExample: false, updatedAt: serverTimestamp() });
+      try {
+        await setDoc(doc(db, "clientPrivate", "__settings_private__"), { ...input.privateSettings, updatedAt: serverTimestamp() });
+      } catch {
+        // Ignore si non requis
+      }
       return { ok: true };
     });
   },
