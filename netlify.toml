@@ -2,6 +2,12 @@
   command = "npm run build"
   publish = "dist"
 
+[build.environment]
+  # Les variables VITE_FIREBASE_* sont des identifiants publics du SDK Web Firebase
+  # intégrés par Vite dans le bundle client : on indique au scanner Netlify de les autoriser
+  # même si la case "Contains secret values" (cadenas) est cochée dans l'interface Netlify.
+  SECRETS_SCAN_OMIT_KEYS = "VITE_FIREBASE_API_KEY,VITE_FIREBASE_AUTH_DOMAIN,VITE_FIREBASE_DATABASE_URL,VITE_FIREBASE_PROJECT_ID,VITE_FIREBASE_STORAGE_BUCKET,VITE_FIREBASE_MESSAGING_SENDER_ID,VITE_FIREBASE_APP_ID,VITE_FIREBASE_MEASUREMENT_ID,VITE_FIREBASE_FUNCTIONS_REGION,VITE_USE_EMULATORS"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
