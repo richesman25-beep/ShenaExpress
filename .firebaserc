@@ -1,7 +1,7 @@
 {
   "projects": {
-    "default": "creo-store",
-    "production": "creo-store",
+    "default": "shenaexpress-13924",
+    "production": "shenaexpress-13924",
     "demo": "demo-shena"
   }
 }

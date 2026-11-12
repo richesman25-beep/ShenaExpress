@@ -53,7 +53,7 @@ import {
   type PaymentRecordDoc,
   type StatusCode,
 } from "@shared/index";
-import { getFirebaseAuth, getFirebaseDb } from "./firebase";
+import { firebaseState, getFirebaseAuth, getFirebaseDb } from "./firebase";
 
 function deriveOrderStatus(current: StatusCode, stats: OrderStats): StatusCode {
   if (["cancelled", "returned", "issue"].includes(current)) return current;
@@ -71,6 +71,8 @@ export const technicalClientEmail = (clientId: string, suffix?: string) =>
 const phoneKey = (phone: string) => phone.replace(/\D/g, "");
 
 function getWebApiKey(): string {
+  const appKey = getFirebaseAuth().app.options.apiKey;
+  if (appKey) return appKey;
   const key = (import.meta.env?.VITE_FIREBASE_API_KEY as string | undefined)?.trim();
   if (!key) throw new Error("Clé API Firebase manquante (VITE_FIREBASE_API_KEY).");
   return key.replace(/^["']+|["',]+$/g, "");
@@ -157,15 +159,16 @@ async function withFirestoreCheck<T>(fn: () => Promise<T>): Promise<T> {
   } catch (err) {
     const code = (err as { code?: string })?.code ?? "";
     const msg = (err as { message?: string })?.message ?? "";
+    const projectId = firebaseState.projectId || "shenaexpress-13924";
     if (code === "permission-denied" || msg.includes("Missing or insufficient permissions")) {
       throw new Error(
-        "Accès Firestore refusé par les règles de sécurité du projet creo-store. Dans Console Firebase > Firestore Database > Règles, publiez le contenu du fichier firestore.rules du projet.",
+        `Accès Firestore refusé par les règles de sécurité du projet ${projectId}. Dans Console Firebase > Firestore Database > Règles, publiez le contenu du fichier firestore.rules du projet.`,
         { cause: err },
       );
     }
     if (code === "not-found" || msg.includes("database (default) does not exist") || msg.includes("offline")) {
       throw new Error(
-        "La base de données Cloud Firestore n'est pas encore activée sur le projet creo-store. Ouvrez Console Firebase > Firestore Database > Créer une base de données.",
+        `La base de données Cloud Firestore n'est pas encore activée sur le projet ${projectId}. Ouvrez Console Firebase > Firestore Database > Créer une base de données.`,
         { cause: err },
       );
     }

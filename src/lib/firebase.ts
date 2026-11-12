@@ -39,6 +39,18 @@ const DEMO_CONFIG = {
   measurementId: undefined as string | undefined,
 };
 
+const DEFAULT_PRODUCTION_CONFIG = {
+  apiKey: "AIzaSyDzb42MNgabaOKe3brkWp7S3uXMa8WhLxE",
+  authDomain: "shenaexpress-13924.firebaseapp.com",
+  databaseURL: undefined as string | undefined,
+  projectId: "shenaexpress-13924",
+  storageBucket: "shenaexpress-13924.firebasestorage.app",
+  messagingSenderId: "447281041430",
+  appId: "1:447281041430:web:ce2292f951c29f9fc86537",
+  measurementId: "G-14W9DE36MY",
+  region: "us-east1",
+};
+
 /** Nettoie les guillemets ou virgules de fin souvent copiés par erreur depuis un extrait JS dans Netlify. */
 function cleanEnvValue(raw: unknown): string {
   if (typeof raw !== "string") return "";
@@ -155,30 +167,22 @@ function readEnvConfig() {
   const forceEmulators = cleanEnvValue(env.VITE_USE_EMULATORS) === "true";
   const isProdBuild = Boolean(env.PROD) && !forceEmulators;
 
+  const activeConfig =
+    validation.valid && validation.config && validation.config.projectId !== "creo-store"
+      ? validation.config
+      : DEFAULT_PRODUCTION_CONFIG;
+
   if (isProdBuild) {
-    if (!validation.valid || !validation.config) {
-      return {
-        state: {
-          mode: "unconfigured" as const,
-          projectId: cleanEnvValue(env.VITE_FIREBASE_PROJECT_ID),
-          region,
-          configError: validation.errorMessage,
-          missingVars: validation.missingVars,
-          malformedVars: validation.malformedVars,
-        },
-        firebaseConfig: null,
-      };
-    }
     return {
-      state: { mode: "production" as const, projectId: validation.config.projectId, region },
-      firebaseConfig: validation.config,
+      state: { mode: "production" as const, projectId: activeConfig.projectId, region: activeConfig.region },
+      firebaseConfig: activeConfig,
     };
   }
 
   if (validation.valid && validation.config && !forceEmulators) {
     return {
-      state: { mode: "production" as const, projectId: validation.config.projectId, region },
-      firebaseConfig: validation.config,
+      state: { mode: "production" as const, projectId: activeConfig.projectId, region: activeConfig.region },
+      firebaseConfig: activeConfig,
     };
   }
 
@@ -199,7 +203,7 @@ let emulatorsConnected = false;
 
 function ensureInitialized() {
   if (!resolved.firebaseConfig) {
-    throw new Error(resolved.state.configError || "Firebase non configuré.");
+    throw new Error(firebaseState.configError || "Firebase non configuré.");
   }
   if (!appInstance) {
     appInstance = getApps()[0] ?? initializeApp(resolved.firebaseConfig);
