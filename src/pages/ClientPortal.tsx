@@ -23,6 +23,7 @@ import {
   ChevronRight,
   CreditCard,
   MapPin,
+  User,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -30,8 +31,6 @@ import { useI18n } from "@/i18n";
 import { getFirebaseDb } from "@/lib/firebase";
 import {
   SHENA_PRIMARY_STATUSES,
-  countShipmentsByBucket,
-  sumOrderStats,
   isAvailableForPickup,
   statusDescription,
   statusLocation,
@@ -51,6 +50,7 @@ import {
   StatusBadge,
   TransportBadge,
   ShipmentProgress,
+  WeightAndFeeCard,
   PickupAvailabilityBanner,
   TrackingTimeline,
   WhatsappContactButton,
@@ -179,6 +179,7 @@ export function ClientLayout() {
     { to: "/espace-client/commandes", end: false, label: t.nav.myOrders, icon: ShoppingBag },
     { to: "/espace-client/colis", end: false, label: t.nav.myShipments, icon: Package },
     { to: "/espace-client/notifications", end: false, label: t.nav.notifications, icon: Bell, badge: unreadCount },
+    { to: "/espace-client/profil", end: false, label: "Profil", icon: User },
   ];
 
   const handleSignOut = async () => {
@@ -302,9 +303,46 @@ export function ClientLayout() {
           )}
         </header>
 
-        <main id="main-content" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:py-8">
+        <main id="main-content" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 pb-24 sm:py-8 lg:pb-8">
           <Outlet />
         </main>
+
+        {/* Barre de navigation mobile */}
+        <nav
+          aria-label="Navigation mobile"
+          className="fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
+        >
+          <div className="grid grid-cols-4 gap-1 px-2 py-1.5">
+            {[
+              { to: "/espace-client", end: true, label: "Accueil", icon: LayoutDashboard },
+              { to: "/espace-client/colis", end: false, label: "Mes colis", icon: Package },
+              { to: "/espace-client/notifications", end: false, label: "Alertes", icon: Bell, badge: unreadCount },
+              { to: "/espace-client/profil", end: false, label: "Profil", icon: User },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    `relative flex flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-[11px] font-bold transition ${
+                      isActive ? "bg-royal-600/10 text-royal-600" : "text-slate-600"
+                    }`
+                  }
+                >
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  <span>{item.label}</span>
+                  {item.badge && item.badge > 0 ? (
+                    <span className="absolute top-1 right-4 rounded-full bg-orange-500 px-1.5 text-[9px] font-extrabold text-white">
+                      {item.badge}
+                    </span>
+                  ) : null}
+                </NavLink>
+              );
+            })}
+          </div>
+        </nav>
       </div>
     </ClientDataContext.Provider>
   );
@@ -312,12 +350,43 @@ export function ClientLayout() {
 
 /* ------------------------------------------- A. Tableau de bord du Client */
 export function ClientDashboardPage() {
-  const { claims } = useAuth();
-  const { settings, labelForStatus } = useSettings();
-  const { profile, orders, shipments, events, loading } = useClientData();
+  const { claims, signOut } = useAuth();
+  const { settings } = useSettings();
+  const { profile, orders, shipments, notifications, loading } = useClientData();
 
-  const stats = useMemo(() => sumOrderStats(orders.map((o) => o.stats)), [orders]);
-  const buckets = useMemo(() => countShipmentsByBucket(shipments), [shipments]);
+  const firstName = useMemo(() => {
+    const raw = profile?.fullName?.trim();
+    if (!raw) return null;
+    return raw.split(/\s+/)[0];
+  }, [profile?.fullName]);
+
+  const kpis = useMemo(() => {
+    let preparing = 0;
+    let inTransit = 0;
+    let delivered = 0;
+    for (const s of shipments) {
+      if (s.status === "delivered") {
+        delivered += 1;
+      } else if (
+        s.status === "shipped" ||
+        s.status === "in_transit" ||
+        s.status === "arrived_haiti" ||
+        s.status === "customs" ||
+        s.status === "available" ||
+        s.status === "out_for_delivery"
+      ) {
+        inTransit += 1;
+      } else if (s.status !== "cancelled") {
+        preparing += 1;
+      }
+    }
+    return {
+      ordersCount: orders.length,
+      preparing,
+      inTransit,
+      delivered,
+    };
+  }, [orders.length, shipments]);
 
   if (loading) {
     return <p className="text-sm text-slate-600 py-8">Chargement de votre espace personnel…</p>;
@@ -332,14 +401,36 @@ export function ClientDashboardPage() {
             Identifiant : {profile?.clientId ?? claims?.clientId ?? "—"}
           </span>
           <h1 className="text-2xl sm:text-3xl font-extrabold">
-            Bienvenue{profile?.fullName ? `, ${profile.fullName}` : ""}
+            Bienvenue{firstName ? `, ${firstName}` : ""}
           </h1>
           <p className="text-sm text-slate-300">
-            Suivez l&apos;étape logistique de vos colis et vérifiez s&apos;ils sont disponibles pour le retrait.
+            Suivez vos commandes, la réception à Miami, la pesée et la livraison jusqu&apos;en Haïti.
           </p>
         </div>
-        <div className="shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <Link
+            to="/espace-client/colis"
+            className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-extrabold text-white shadow-xs hover:bg-orange-600 transition"
+          >
+            <Search className="h-4 w-4" aria-hidden="true" />
+            <span>Suivre un colis</span>
+          </Link>
           <WhatsappContactButton clientId={profile?.clientId ?? claims?.clientId} />
+          <Link
+            to="/espace-client/profil"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 px-3 py-2.5 text-xs font-bold text-white hover:bg-white/10 transition"
+          >
+            <User className="h-4 w-4" aria-hidden="true" />
+            <span>Profil</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => signOut()}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 px-3 py-2.5 text-xs font-bold text-slate-200 hover:bg-white/10 transition"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+            <span>Déconnexion</span>
+          </button>
         </div>
       </section>
 
@@ -350,21 +441,20 @@ export function ClientDashboardPage() {
       )}
 
       {/* Cartes d'indicateurs calculés à partir des données réelles */}
-      <section aria-label="Indicateurs personnels" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label="Commandes" value={orders.length} tone="navy" />
-        <KpiCard label="Reçus à Miami" value={buckets.pending || stats.received} tone="sky" />
-        <KpiCard label="Transit aérien (Rép. Dom.)" value={buckets.transit} tone="blue" />
-        <KpiCard label="En route vers Haïti" value={buckets.arrived} tone="amber" />
-        <KpiCard label="Disponibles pour retrait" value={buckets.available + buckets.delivered} tone="emerald" />
+      <section aria-label="Indicateurs personnels" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="Commandes" value={kpis.ordersCount} tone="navy" />
+        <KpiCard label="Colis en préparation" value={kpis.preparing} tone="sky" />
+        <KpiCard label="Colis en transit" value={kpis.inTransit} tone="blue" />
+        <KpiCard label="Colis livrés" value={kpis.delivered} tone="emerald" />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-12">
-        {/* Suivi rapide des colis et disponibilité pour le retrait */}
+        {/* Mes colis */}
         <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-extrabold text-navy-900 flex items-center gap-2">
               <Package className="h-4 w-4 text-royal-600" aria-hidden="true" />
-              <span>Suivi de mes colis &amp; retrait</span>
+              <span>Mes colis</span>
             </h2>
             <Link to="/espace-client/colis" className="text-xs font-bold text-royal-600 hover:underline">
               Voir tous les colis →
@@ -393,7 +483,7 @@ export function ClientDashboardPage() {
                     {ready && (
                       <div className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-extrabold text-emerald-900">
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
-                        <span>Disponible pour le retrait à notre local en Haïti</span>
+                        <span>Prêt pour livraison / retrait en Haïti</span>
                       </div>
                     )}
                   </li>
@@ -403,47 +493,73 @@ export function ClientDashboardPage() {
           )}
         </section>
 
-        {/* Dernières mises à jour */}
-        <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-extrabold text-navy-900">Dernières mises à jour</h2>
-            <Link to="/espace-client/commandes" className="text-xs font-bold text-royal-600 hover:underline">
-              Mes commandes →
-            </Link>
-          </div>
-          {events.filter((e) => e.kind !== "dates").length === 0 ? (
-            <p className="text-xs text-slate-500 py-4">Aucune mise à jour enregistrée pour le moment.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {events
-                .filter((e) => e.kind !== "dates")
-                .slice(0, 6)
-                .map((ev) => (
-                  <li key={ev.id} className="py-3 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-bold text-navy-900">
-                        {ev.shipmentId ? (
-                          <Link to={`/espace-client/colis/${ev.shipmentId}`} className="hover:text-royal-600">
-                            Colis {ev.shipmentId}
-                          </Link>
-                        ) : ev.orderId ? (
-                          <Link to={`/espace-client/commandes/${ev.orderId}`} className="hover:text-royal-600">
-                            Commande {ev.orderId}
-                          </Link>
-                        ) : (
-                          "Suivi"
-                        )}
-                      </span>
-                      {ev.toStatus && (
-                        <span className="text-xs font-semibold text-royal-600">{labelForStatus(ev.toStatus)}</span>
-                      )}
+        {/* Mes commandes & dernières notifications */}
+        <div className="lg:col-span-6 space-y-6">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-extrabold text-navy-900 flex items-center gap-2">
+                <ShoppingBag className="h-4 w-4 text-royal-600" aria-hidden="true" />
+                <span>Mes commandes</span>
+              </h2>
+              <Link to="/espace-client/commandes" className="text-xs font-bold text-royal-600 hover:underline">
+                Toutes mes commandes →
+              </Link>
+            </div>
+            {orders.length === 0 ? (
+              <p className="text-xs text-slate-500 py-2">Aucune commande enregistrée pour le moment.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {orders.slice(0, 4).map((o) => (
+                  <li key={o.orderId} className="py-2.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        to={`/espace-client/commandes/${o.orderId}`}
+                        className="text-sm font-extrabold text-navy-900 hover:text-royal-600"
+                      >
+                        {o.orderId}
+                      </Link>
+                      <p className="text-xs text-slate-500 truncate">
+                        {o.items[0]?.description ?? "Commande SHENA Express"}
+                      </p>
                     </div>
-                    {ev.publicNote && <p className="text-xs text-slate-600">{ev.publicNote}</p>}
+                    <StatusBadge status={o.status} size="sm" />
                   </li>
                 ))}
-            </ul>
-          )}
-        </section>
+              </ul>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-extrabold text-navy-900 flex items-center gap-2">
+                <Bell className="h-4 w-4 text-royal-600" aria-hidden="true" />
+                <span>Dernières notifications</span>
+              </h2>
+              <Link to="/espace-client/notifications" className="text-xs font-bold text-royal-600 hover:underline">
+                Toutes →
+              </Link>
+            </div>
+            {notifications.length === 0 ? (
+              <p className="text-xs text-slate-500 py-2">Aucune notification pour le moment.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {notifications.slice(0, 4).map((n) => (
+                  <li key={n.id} className="py-2.5 space-y-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-extrabold text-navy-900">{n.title}</span>
+                      {!n.readAt && (
+                        <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-800">
+                          Nouveau
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-600">{n.body}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );
@@ -791,8 +907,9 @@ export function ClientOrderDetailPage() {
                     </Link>
                     <StatusBadge status={sh.status} size="sm" />
                   </div>
-                  <p className="text-xs text-slate-600">{statusDescription(sh.status)}</p>
-                  {ready && (
+                    <p className="text-xs text-slate-600">{statusDescription(sh.status)}</p>
+                    <WeightAndFeeCard shipment={sh} />
+                    {ready && (
                     <div className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-extrabold text-emerald-900">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
                       <span>Disponible pour le retrait</span>
@@ -972,7 +1089,8 @@ export function ClientShipmentsPage() {
                 </div>
 
                 <PickupAvailabilityBanner status={sh.status} instructions={instructions} />
-                <ShipmentProgress status={sh.status} lastStep={sh.lastStep} />
+                <WeightAndFeeCard shipment={sh} />
+                <ShipmentProgress status={sh.status} lastStep={sh.lastStep} shipment={sh} />
               </article>
             );
           })}
@@ -1048,11 +1166,13 @@ export function ClientShipmentDetailPage() {
 
         <PickupAvailabilityBanner status={sh.status} instructions={instructions} />
 
+        <WeightAndFeeCard shipment={sh} />
+
         <div className="space-y-2">
           <h2 className="text-xs font-extrabold uppercase tracking-wider text-navy-900">
             Progression logistique SHENA Express
           </h2>
-          <ShipmentProgress status={sh.status} lastStep={sh.lastStep} />
+          <ShipmentProgress status={sh.status} lastStep={sh.lastStep} shipment={sh} />
         </div>
       </section>
 
@@ -1151,6 +1271,60 @@ export function ClientNotificationsPage() {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------- Profil Client */
+export function ClientProfilePage() {
+  const { user, claims, signOut } = useAuth();
+  const { profile } = useClientData();
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Mon profil</h1>
+        <p className="text-xs text-slate-600">
+          Informations de votre compte client SHENA Express et accès rapide au support.
+        </p>
+      </div>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Nom complet</div>
+            <div className="mt-1 text-sm font-extrabold text-navy-900">
+              {profile?.fullName ?? user?.displayName ?? "—"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Identifiant client</div>
+            <div className="mt-1 text-sm font-extrabold text-royal-700">
+              {profile?.clientId ?? claims?.clientId ?? "—"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Téléphone</div>
+            <div className="mt-1 text-sm font-semibold text-slate-800">{profile?.phone ?? "—"}</div>
+          </div>
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">E-mail</div>
+            <div className="mt-1 text-sm font-semibold text-slate-800">{profile?.email ?? user?.email ?? "—"}</div>
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <WhatsappContactButton clientId={profile?.clientId ?? claims?.clientId} />
+          <button
+            type="button"
+            onClick={() => signOut()}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-800 hover:bg-rose-100"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+            <span>Se déconnecter</span>
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

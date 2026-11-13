@@ -219,6 +219,35 @@ export const updateStatusSchema = z.object({
   internalNote: optionalText(2000),
 });
 
+export const recordShipmentWeighingSchema = z.object({
+  shipmentId: shipmentIdSchema,
+  weightLb: z
+    .number({ message: "Le poids réel doit être un nombre." })
+    .finite({ message: "Poids invalide." })
+    .positive({ message: "Le poids doit être strictement supérieur à 0 lb." })
+    .max(10000, { message: "Le poids ne peut pas dépasser 10 000 lb." })
+    .refine((v) => Math.abs(v * 1000 - Math.round(v * 1000)) < 1e-6, {
+      message: "Le poids accepte au maximum 3 décimales (ex. 4,75 lb).",
+    }),
+  confirmMiamiReceipt: z.boolean().optional().default(false),
+  reason: optionalText(300),
+});
+
+export const shippingPaymentStatusSchema = z.enum([
+  "unpaid",
+  "pending_verification",
+  "paid",
+  "refunded",
+  "adjustment_required",
+]);
+
+export const updateShippingPaymentSchema = z.object({
+  shipmentId: shipmentIdSchema,
+  shippingPaymentStatus: shippingPaymentStatusSchema,
+  paidAmountCents: z.number().int().min(0).max(1_000_000_000).nullish().transform((v) => v ?? null),
+  note: optionalText(300),
+});
+
 /* ------------------------------------------------------------- finance */
 export const chargeLineSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/).optional(),

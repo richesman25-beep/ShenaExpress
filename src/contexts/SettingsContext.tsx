@@ -6,7 +6,7 @@ import { statusLabel, type PublicSettingsDoc, type StatusCode } from "@shared/in
 const DEFAULT_SETTINGS: PublicSettingsDoc = {
   companyName: "SHENA Express",
   logoUrl: null,
-  whatsappNumber: "50956135256",
+  whatsappNumber: "50956125356",
   contactEmail: "shenyderj2000@gmail.com",
   address: null,
   serviceArea: null,

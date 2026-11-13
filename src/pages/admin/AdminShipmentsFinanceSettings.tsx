@@ -10,6 +10,7 @@ import {
   Ban,
   Save,
   UserCog,
+  Scale,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -30,6 +31,12 @@ import {
   formatIsoDate,
   parseMoney,
   formatMoney,
+  COMMERCIAL_RATE_CENTS_PER_LB,
+  SHIPPING_PAYMENT_STATUS_LABELS,
+  parseValidWeightLb,
+  calculateShippingFeeCents,
+  formatWeightLb,
+  hasConfirmedMiamiReception,
   type ClientDoc,
   type ShipmentDoc,
   type StatusCode,
@@ -39,10 +46,12 @@ import {
   type Permission,
   type NotificationType,
   type UserDoc,
+  type ShippingPaymentStatus,
 } from "@shared/index";
 import {
   StatusBadge,
   ShipmentProgress,
+  WeightAndFeeCard,
   PickupAvailabilityBanner,
   TrackingTimeline,
   Modal,
@@ -162,6 +171,7 @@ export function AdminShipmentsPage() {
                   <th className="py-3 px-4">Numéro de suivi</th>
                   <th className="py-3 px-4">Client associé</th>
                   <th className="py-3 px-4">Description / Référence</th>
+                  <th className="py-3 px-4">Pesée &amp; Frais (USD)</th>
                   <th className="py-3 px-4">Étape logistique actuelle</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
@@ -185,6 +195,22 @@ export function AdminShipmentsPage() {
                         </div>
                         {s.orderIds.length > 0 && (
                           <div className="text-slate-500">{s.orderIds.join(", ")}</div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {s.actualWeightLb !== null && s.actualWeightLb !== undefined && s.shippingFeeCents !== null && s.shippingFeeCents !== undefined ? (
+                          <div>
+                            <div className="font-bold text-navy-900">
+                              {formatWeightLb(s.actualWeightLb)} · {formatMoney(s.shippingFeeCents, s.shippingCurrency ?? "USD")}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {SHIPPING_PAYMENT_STATUS_LABELS[s.shippingPaymentStatus ?? "unpaid"]}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">
+                            {hasConfirmedMiamiReception(s) ? "En attente de pesée" : "Non pesé"}
+                          </span>
                         )}
                       </td>
                       <td className="py-3 px-4">
@@ -497,9 +523,26 @@ function ShipmentStatusModal({
   const [confirmNextStatus, setConfirmNextStatus] = useState<StatusCode | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [weightInput, setWeightInput] = useState(
+    shipment.actualWeightLb !== null && shipment.actualWeightLb !== undefined ? String(shipment.actualWeightLb) : "",
+  );
+  const [confirmMiami, setConfirmMiami] = useState(!hasConfirmedMiamiReception(shipment));
+  const [weightReason, setWeightReason] = useState("");
+  const [weighBusy, setWeighBusy] = useState(false);
+
+  const [shipPayStatus, setShipPayStatus] = useState<ShippingPaymentStatus>(
+    shipment.shippingPaymentStatus ?? "unpaid",
+  );
+  const [payBusy, setPayBusy] = useState(false);
+
   useEffect(() => {
     setStatus(shipment.status);
-  }, [shipment.status]);
+    setWeightInput(
+      shipment.actualWeightLb !== null && shipment.actualWeightLb !== undefined ? String(shipment.actualWeightLb) : "",
+    );
+    setConfirmMiami(!hasConfirmedMiamiReception(shipment));
+    setShipPayStatus(shipment.shippingPaymentStatus ?? "unpaid");
+  }, [shipment]);
 
   useEffect(() => {
     getDocs(collection(getFirebaseDb(), "shipmentEventsPrivate"))
@@ -536,6 +579,55 @@ function ShipmentStatusModal({
   };
 
   const nextStep = nextLogisticsStatus(shipment.status);
+  const parsedPreviewWeight = parseValidWeightLb(weightInput);
+  const previewFeeCents = parsedPreviewWeight ? calculateShippingFeeCents(parsedPreviewWeight, COMMERCIAL_RATE_CENTS_PER_LB) : null;
+  const isCorrection = shipment.actualWeightLb !== null && shipment.actualWeightLb !== undefined;
+
+  const handleRecordWeighing = async (e: FormEvent) => {
+    e.preventDefault();
+    const validWeight = parseValidWeightLb(weightInput);
+    if (!validWeight) {
+      notify("error", "Entrez un poids valide en livres (lb), positif et avec au maximum 3 décimales.");
+      return;
+    }
+    if (isCorrection && !weightReason.trim()) {
+      notify("error", "Veuillez indiquer un motif pour la correction du poids.");
+      return;
+    }
+    setWeighBusy(true);
+    try {
+      const res = await api.recordShipmentWeighing({
+        shipmentId: shipment.shipmentId,
+        actualWeightLb: validWeight,
+        confirmMiamiReception: confirmMiami,
+        reason: weightReason.trim() || null,
+      });
+      notify(
+        "success",
+        `Pesée enregistrée : ${formatWeightLb(res.actualWeightLb)} → ${formatMoney(res.shippingFeeCents, "USD")}.`,
+      );
+      setWeightReason("");
+    } catch (err) {
+      notify("error", formatError(err));
+    } finally {
+      setWeighBusy(false);
+    }
+  };
+
+  const handleUpdateShippingPayment = async () => {
+    setPayBusy(true);
+    try {
+      await api.updateShippingPayment({
+        shipmentId: shipment.shipmentId,
+        shippingPaymentStatus: shipPayStatus,
+      });
+      notify("success", `Statut de paiement mis à jour : ${SHIPPING_PAYMENT_STATUS_LABELS[shipPayStatus]}.`);
+    } catch (err) {
+      notify("error", formatError(err));
+    } finally {
+      setPayBusy(false);
+    }
+  };
 
   return (
     <Modal title={`Suivi colis ${shipment.trackingNumber}`} onClose={onClose} maxWidth="max-w-2xl">
@@ -562,7 +654,124 @@ function ShipmentStatusModal({
         </div>
 
         <PickupAvailabilityBanner status={shipment.status} />
-        <ShipmentProgress status={shipment.status} lastStep={shipment.lastStep} />
+        <WeightAndFeeCard shipment={shipment} />
+        <ShipmentProgress status={shipment.status} lastStep={shipment.lastStep} shipment={shipment} />
+
+        {can("shipments.write") && (
+          <form onSubmit={handleRecordWeighing} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-navy-900 uppercase">
+                <Scale className="h-4 w-4 text-royal-600" aria-hidden="true" />
+                <span>{isCorrection ? "Corriger le poids réel (Miami)" : "Enregistrer la pesée à Miami"}</span>
+              </div>
+              <span className="text-[11px] font-bold text-slate-600">Tarif : 6,00 USD / lb</span>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Poids réel (lb)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.001"
+                  placeholder="Ex. 2.30"
+                  value={weightInput}
+                  onChange={(e) => setWeightInput(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold"
+                />
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 flex flex-col justify-center">
+                <span className="text-[11px] font-semibold text-slate-500">Aperçu du calcul (6,00 USD/lb)</span>
+                <span className="text-sm font-extrabold text-navy-900">
+                  {previewFeeCents !== null && parsedPreviewWeight !== null
+                    ? `${parsedPreviewWeight.toFixed(2)} lb × 6,00 = ${formatMoney(previewFeeCents, "USD")}`
+                    : "Saisissez un poids valide"}
+                </span>
+              </div>
+            </div>
+
+            {!hasConfirmedMiamiReception(shipment) && (
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={confirmMiami}
+                  onChange={(e) => setConfirmMiami(e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                <span>Confirmer aussi l&apos;arrivée à l&apos;entrepôt de Miami</span>
+              </label>
+            )}
+
+            {isCorrection && (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Motif de la correction (obligatoire)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex. Nouvelle pesée vérifiée à l'entrepôt"
+                  value={weightReason}
+                  onChange={(e) => setWeightReason(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[11px] text-slate-500">
+                Le montant final est recalculé côté serveur (aucun arrondi à l&apos;unité supérieure).
+              </span>
+              <button
+                type="submit"
+                disabled={weighBusy}
+                className="rounded-xl bg-navy-900 px-4 py-2 text-xs font-bold text-white hover:bg-navy-800"
+              >
+                {weighBusy ? "Enregistrement…" : isCorrection ? "Mettre à jour la pesée" : "Enregistrer la pesée"}
+              </button>
+            </div>
+
+            {shipment.weightHistory && shipment.weightHistory.length > 0 && (
+              <div className="pt-2 border-t border-slate-200 space-y-1">
+                <div className="text-[11px] font-bold uppercase text-slate-500">Historique des corrections de poids</div>
+                <ul className="space-y-1 text-[11px] text-slate-600">
+                  {shipment.weightHistory.map((h, i) => (
+                    <li key={i}>
+                      {formatIsoDate(h.recordedAt)} : {h.previousWeightLb ?? "—"} lb → {h.newWeightLb} lb (
+                      {formatMoney(h.newFeeCents, "USD")}) — {h.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </form>
+        )}
+
+        {(can("shipments.write") || can("finance.write")) && shipment.actualWeightLb !== null && shipment.actualWeightLb !== undefined && (
+          <div className="rounded-xl border border-slate-200 p-4 space-y-2.5">
+            <div className="text-xs font-bold text-navy-900 uppercase">Statut du paiement des frais de livraison</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={shipPayStatus}
+                onChange={(e) => setShipPayStatus(e.target.value as ShippingPaymentStatus)}
+                className="flex-1 min-w-[200px] rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold"
+              >
+                {(Object.keys(SHIPPING_PAYMENT_STATUS_LABELS) as ShippingPaymentStatus[]).map((k) => (
+                  <option key={k} value={k}>
+                    {SHIPPING_PAYMENT_STATUS_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={payBusy}
+                onClick={handleUpdateShippingPayment}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+              >
+                {payBusy ? "Mise à jour…" : "Mettre à jour le paiement"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {can("shipments.write") && (
           <form

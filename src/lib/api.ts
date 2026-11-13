@@ -10,6 +10,7 @@ import type {
   ChargeLine,
   PublicSettingsDoc,
   PrivateSettingsDoc,
+  ShippingPaymentStatus,
 } from "@shared/index";
 
 /** Traduit toute erreur Firebase (Auth, Firestore ou Functions) en message français clair pour l'utilisateur. */
@@ -254,6 +255,32 @@ export const api = {
     },
     { ok: boolean }
   >("updateStatus", (p) => directBackend.updateStatus(p)),
+
+  recordShipmentWeighing: call<
+    {
+      shipmentId: string;
+      actualWeightLb: number;
+      confirmMiamiReception?: boolean;
+      reason?: string | null;
+      publicNote?: string | null;
+    },
+    {
+      actualWeightLb: number;
+      ratePerLbCents: number;
+      shippingFeeCents: number;
+      shippingPaymentStatus: ShippingPaymentStatus;
+    }
+  >("recordShipmentWeighing", (p) => directBackend.recordShipmentWeighing(p)),
+
+  updateShippingPayment: call<
+    {
+      shipmentId: string;
+      shippingPaymentStatus: ShippingPaymentStatus;
+      paidAmountCents?: number | null;
+      note?: string | null;
+    },
+    { ok: boolean }
+  >("updateShippingPayment", (p) => directBackend.updateShippingPayment(p)),
 
   setOrderCharges: call<{ orderId: string; charges: ChargeLine[] }, { ok: boolean }>(
     "setOrderCharges",

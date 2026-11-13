@@ -15,7 +15,7 @@ export {
   saveClientNotes,
 } from "./clients.js";
 export { createOrder, updateOrder, recordReceipt } from "./orders.js";
-export { createShipment, updateShipment } from "./shipments.js";
+export { createShipment, updateShipment, recordShipmentWeighing, updateShippingPayment } from "./shipments.js";
 export { updateStatus } from "./tracking.js";
 export { setOrderCharges, recordPayment, voidPayment } from "./finance.js";
 export { updateSettings, setStaffRole } from "./settings.js";

@@ -23,6 +23,8 @@ import {
   createShipmentSchema,
   updateShipmentSchema,
   updateStatusSchema,
+  recordShipmentWeighingSchema,
+  updateShippingPaymentSchema,
   setChargesSchema,
   recordPaymentSchema,
   voidPaymentSchema,
@@ -42,6 +44,13 @@ import {
   totalPaid,
   balance,
   paymentStatus,
+  COMMERCIAL_RATE_CENTS_PER_LB,
+  calculateShippingFeeCents,
+  hasConfirmedMiamiReception,
+  formatMoney,
+  formatWeightLb,
+  statusLabel,
+  notificationTypeForStatus,
   zodMessages,
   type ClientDoc,
   type OrderDoc,
@@ -52,6 +61,8 @@ import {
   type ChargeLine,
   type PaymentRecordDoc,
   type StatusCode,
+  type ShippingPaymentStatus,
+  type WeightCorrectionEntry,
 } from "@shared/index";
 import { firebaseState, getFirebaseAuth, getFirebaseDb } from "./firebase";
 
@@ -657,6 +668,7 @@ export const directBackend = {
           description: it.description,
           quantity: it.quantityOrdered,
         }));
+        const nowIso = new Date().toISOString();
         const newShipment: ShipmentDoc = {
           shipmentId,
           trackingNumber: input.trackingNumber,
@@ -666,12 +678,28 @@ export const directBackend = {
           lines,
           itemCount: lines.reduce((s, l) => s + l.quantity, 0),
           weightKg: null,
+          actualWeightLb: null,
+          ratePerLbCents: null,
+          shippingFeeCents: null,
+          shippingCurrency: "USD",
+          shippingPaymentStatus: null,
+          paidAmountCents: 0,
+          miamiReceivedAt: initialStatus === "received" ? nowIso : null,
+          weighedAt: null,
+          weighedByUid: null,
+          weightHistory: [],
+          orderConfirmedAt: nowIso,
+          preparingAt: initialStatus === "preparing" ? nowIso : null,
+          inTransitAt: null,
+          arrivedHaitiAt: null,
+          readyForDeliveryAt: null,
+          deliveredAt: null,
           dimensionsCm: null,
           transportMode: input.transportMode ?? "air",
           status: initialStatus,
           lastStep: progressStep(initialStatus) ?? 1,
           dates: {
-            warehouseReceivedAt: null,
+            warehouseReceivedAt: initialStatus === "received" ? nowIso : null,
             estimatedDeparture: null,
             shippedAt: null,
             estimatedArrival: null,
@@ -1010,6 +1038,7 @@ export const directBackend = {
       const status: StatusCode =
         input.initialStatus ?? (input.dates.warehouseReceivedAt || lines.length === 0 ? "received" : "preparing");
 
+      const nowIso = new Date().toISOString();
       const newShipment: ShipmentDoc = {
         shipmentId,
         trackingNumber,
@@ -1019,6 +1048,22 @@ export const directBackend = {
         lines: finalLines,
         itemCount,
         weightKg: input.weightKg,
+        actualWeightLb: null,
+        ratePerLbCents: null,
+        shippingFeeCents: null,
+        shippingCurrency: "USD",
+        shippingPaymentStatus: null,
+        paidAmountCents: 0,
+        miamiReceivedAt: status === "received" ? nowIso : null,
+        weighedAt: null,
+        weighedByUid: null,
+        weightHistory: [],
+        orderConfirmedAt: nowIso,
+        preparingAt: status === "preparing" ? nowIso : null,
+        inTransitAt: status === "in_transit" || status === "shipped" ? nowIso : null,
+        arrivedHaitiAt: status === "arrived_haiti" ? nowIso : null,
+        readyForDeliveryAt: status === "available" ? nowIso : null,
+        deliveredAt: status === "delivered" ? nowIso : null,
         dimensionsCm: input.dimensionsCm,
         transportMode: input.transportMode,
         status,
@@ -1165,17 +1210,33 @@ export const directBackend = {
       const data = snap.data() as {
         status: StatusCode;
         clientUid: string;
+        trackingNumber?: string;
         lastStep?: number;
         orderIds?: string[];
         shipmentIds?: string[];
+        miamiReceivedAt?: string | null;
+        preparingAt?: string | null;
+        inTransitAt?: string | null;
+        arrivedHaitiAt?: string | null;
+        readyForDeliveryAt?: string | null;
+        deliveredAt?: string | null;
       };
       const step = progressStep(input.status, data.lastStep ?? 1) ?? data.lastStep ?? 1;
 
       const batch = writeBatch(db);
       const now = serverTimestamp();
+      const nowIso = new Date().toISOString();
+      const stageDates: Record<string, string> = {};
+      if (input.status === "preparing" && !data.preparingAt) stageDates.preparingAt = nowIso;
+      if (input.status === "received" && !data.miamiReceivedAt) stageDates.miamiReceivedAt = nowIso;
+      if ((input.status === "in_transit" || input.status === "shipped") && !data.inTransitAt) stageDates.inTransitAt = nowIso;
+      if ((input.status === "arrived_haiti" || input.status === "customs") && !data.arrivedHaitiAt) stageDates.arrivedHaitiAt = nowIso;
+      if ((input.status === "available" || input.status === "out_for_delivery") && !data.readyForDeliveryAt) stageDates.readyForDeliveryAt = nowIso;
+      if (input.status === "delivered" && !data.deliveredAt) stageDates.deliveredAt = nowIso;
+
       batch.update(ref, {
         status: input.status,
-        ...(input.targetType === "shipment" ? { lastStep: step } : {}),
+        ...(input.targetType === "shipment" ? { lastStep: step, ...stageDates } : {}),
         updatedAt: now,
       });
 
@@ -1197,6 +1258,7 @@ export const directBackend = {
             batch.update(doc(db, "shipments", sid), {
               status: input.status,
               lastStep: step,
+              ...stageDates,
               updatedAt: now,
             });
           }
@@ -1215,6 +1277,206 @@ export const directBackend = {
         dateChanges: null,
         actorUid: actor.uid,
         actorRole: "admin",
+        at: now,
+      });
+
+      const notifType = notificationTypeForStatus(input.status);
+      const label = statusLabel(input.status);
+      batch.set(doc(collection(db, "notifications")), {
+        recipientUid: data.clientUid,
+        type: notifType,
+        title:
+          input.targetType === "shipment"
+            ? `Colis ${data.trackingNumber ?? input.targetId} — ${label}`
+            : `Commande ${input.targetId} — ${label}`,
+        body: input.publicNote || `Nouveau statut enregistré : ${label}.`,
+        orderId: input.targetType === "order" ? input.targetId : (data.orderIds?.[0] ?? null),
+        shipmentId: input.targetType === "shipment" ? input.targetId : (data.shipmentIds?.[0] ?? null),
+        createdAt: now,
+        readAt: null,
+        channels: ["in_app"],
+      });
+
+      await batch.commit();
+      return { ok: true };
+    });
+  },
+
+  async recordShipmentWeighing(raw: unknown): Promise<{
+    actualWeightLb: number;
+    ratePerLbCents: number;
+    shippingFeeCents: number;
+    shippingPaymentStatus: ShippingPaymentStatus;
+  }> {
+    const actor = requireSignedInStaff();
+    const input = parseInput(recordShipmentWeighingSchema, raw);
+    const db = getFirebaseDb();
+    return withFirestoreCheck(async () => {
+      const ref = doc(db, "shipments", input.shipmentId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Colis introuvable.");
+      const current = snap.data() as ShipmentDoc;
+      if (current.status === "cancelled") {
+        throw new Error("Impossible de peser un colis annulé.");
+      }
+
+      const nowIso = new Date().toISOString();
+      let miamiReceivedAt = current.miamiReceivedAt ?? null;
+      let nextStatus = current.status;
+      if (!hasConfirmedMiamiReception(current)) {
+        if (!input.confirmMiamiReceipt) {
+          throw new Error("La réception physique à Miami doit être confirmée avant la pesée.");
+        }
+        miamiReceivedAt = nowIso;
+        nextStatus = "received";
+      } else if (!miamiReceivedAt) {
+        miamiReceivedAt = nowIso;
+      }
+
+      const ratePerLbCents = current.ratePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
+      const shippingFeeCents = calculateShippingFeeCents(input.weightLb, ratePerLbCents);
+      const prevWeight = current.actualWeightLb ?? null;
+      const prevFee = current.shippingFeeCents ?? null;
+      const isCorrection = prevWeight !== null;
+      if (isCorrection && !input.reason?.trim()) {
+        throw new Error("Un motif est obligatoire pour corriger une pesée existante.");
+      }
+
+      const entry: WeightCorrectionEntry = {
+        previousWeightLb: prevWeight,
+        newWeightLb: input.weightLb,
+        previousFeeCents: prevFee,
+        newFeeCents: shippingFeeCents,
+        ratePerLbCents,
+        reason: input.reason?.trim() || "Pesée initiale à l'entrepôt de Miami",
+        recordedAt: nowIso,
+        recordedByUid: actor.uid,
+        recordedByEmail: actor.email || null,
+      };
+      const weightHistory = [...(current.weightHistory ?? []), entry];
+      const paidAmountCents = current.paidAmountCents ?? 0;
+      let nextPayStatus: ShippingPaymentStatus = current.shippingPaymentStatus ?? "unpaid";
+      if (nextPayStatus === "paid" && isCorrection && shippingFeeCents !== paidAmountCents) {
+        nextPayStatus = "adjustment_required";
+      } else if (!current.shippingPaymentStatus) {
+        nextPayStatus = "unpaid";
+      }
+
+      const batch = writeBatch(db);
+      const now = serverTimestamp();
+      batch.update(ref, {
+        status: nextStatus,
+        lastStep: nextStatus === "received" ? Math.max(current.lastStep ?? 1, 1) : current.lastStep,
+        miamiReceivedAt,
+        actualWeightLb: input.weightLb,
+        ratePerLbCents,
+        shippingFeeCents,
+        shippingCurrency: "USD",
+        shippingPaymentStatus: nextPayStatus,
+        paidAmountCents,
+        weighedAt: nowIso,
+        weighedByUid: actor.uid,
+        weightHistory,
+        updatedAt: now,
+      });
+
+      const note = isCorrection
+        ? `Poids corrigé : ${formatWeightLb(input.weightLb)} — Frais recalculés : ${formatMoney(shippingFeeCents, "USD")}.`
+        : `Colis pesé à Miami : ${formatWeightLb(input.weightLb)} — Frais de livraison : ${formatMoney(shippingFeeCents, "USD")} (6,00 USD/lb).`;
+
+      batch.set(doc(collection(db, "shipmentEvents")), {
+        kind: "status",
+        targetType: "shipment",
+        orderId: current.orderIds[0] ?? null,
+        shipmentId: current.shipmentId,
+        clientUid: current.clientUid,
+        fromStatus: current.status,
+        toStatus: nextStatus,
+        publicNote: note,
+        dateChanges: null,
+        actorUid: actor.uid,
+        actorRole: "admin",
+        at: now,
+      });
+
+      batch.set(doc(collection(db, "notifications")), {
+        recipientUid: current.clientUid,
+        type: "shipment_received",
+        title: `Pesée enregistrée — colis ${current.trackingNumber}`,
+        body: note,
+        orderId: current.orderIds[0] ?? null,
+        shipmentId: current.shipmentId,
+        createdAt: now,
+        readAt: null,
+        channels: ["in_app"],
+      });
+
+      batch.set(doc(collection(db, "auditLogs")), {
+        action: isCorrection ? "shipment.weigh_correct" : "shipment.weigh",
+        actorUid: actor.uid,
+        actorRole: "admin",
+        targetType: "shipment",
+        targetId: current.shipmentId,
+        summary: note,
+        details: {
+          previousWeightLb: prevWeight,
+          newWeightLb: input.weightLb,
+          previousFeeCents: prevFee,
+          newFeeCents: shippingFeeCents,
+          ratePerLbCents,
+        },
+        at: now,
+      });
+
+      await batch.commit();
+      return {
+        actualWeightLb: input.weightLb,
+        ratePerLbCents,
+        shippingFeeCents,
+        shippingPaymentStatus: nextPayStatus,
+      };
+    });
+  },
+
+  async updateShippingPayment(raw: unknown): Promise<{ ok: boolean }> {
+    const actor = requireSignedInStaff();
+    const input = parseInput(updateShippingPaymentSchema, raw);
+    const db = getFirebaseDb();
+    return withFirestoreCheck(async () => {
+      const ref = doc(db, "shipments", input.shipmentId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error("Colis introuvable.");
+      const current = snap.data() as ShipmentDoc;
+      if (current.shippingFeeCents == null || current.shippingFeeCents <= 0) {
+        throw new Error("Le colis doit d'abord être pesé à Miami avant d'enregistrer un paiement.");
+      }
+      const paidAmountCents =
+        input.paidAmountCents !== null && input.paidAmountCents !== undefined
+          ? input.paidAmountCents
+          : input.shippingPaymentStatus === "paid"
+            ? current.shippingFeeCents
+            : (current.paidAmountCents ?? 0);
+
+      const batch = writeBatch(db);
+      const now = serverTimestamp();
+      batch.update(ref, {
+        shippingPaymentStatus: input.shippingPaymentStatus,
+        paidAmountCents,
+        updatedAt: now,
+      });
+      batch.set(doc(collection(db, "auditLogs")), {
+        action: "shipment.payment_status",
+        actorUid: actor.uid,
+        actorRole: "admin",
+        targetType: "shipment",
+        targetId: current.shipmentId,
+        summary: `Statut de paiement du colis ${current.trackingNumber} : ${input.shippingPaymentStatus}`,
+        details: {
+          previousStatus: current.shippingPaymentStatus ?? null,
+          nextStatus: input.shippingPaymentStatus,
+          paidAmountCents,
+          note: input.note ?? null,
+        },
         at: now,
       });
       await batch.commit();

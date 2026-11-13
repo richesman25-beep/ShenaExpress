@@ -13,6 +13,7 @@ import {
   ClientShipmentsPage,
   ClientShipmentDetailPage,
   ClientNotificationsPage,
+  ClientProfilePage,
 } from "@/pages/ClientPortal";
 import { AdminLayout, AdminOverviewPage } from "@/pages/admin/AdminContext";
 import { AdminClientsPage, AdminOrdersPage } from "@/pages/admin/AdminClientsAndOrders";
@@ -77,6 +78,7 @@ export function AppRoutes() {
         <Route path="colis" element={<ClientShipmentsPage />} />
         <Route path="colis/:shipmentId" element={<ClientShipmentDetailPage />} />
         <Route path="notifications" element={<ClientNotificationsPage />} />
+        <Route path="profil" element={<ClientProfilePage />} />
       </Route>
 
       {/* Espace administrateur */}

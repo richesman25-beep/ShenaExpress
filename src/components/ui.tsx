@@ -19,20 +19,27 @@ import {
   Plane,
   Ship,
   ExternalLink,
+  Scale,
 } from "lucide-react";
 import {
   STATUS_DEFINITIONS,
-  SHENA_LOGISTICS_STEPS,
-  shenaStepNumber,
+  TIMELINE_7_STEPS,
+  timelineStepNumber,
   isAvailableForPickup,
   statusDescription,
   statusLocation,
   buildWhatsappMessage,
   buildWhatsappUrl,
+  getShipmentFeeVisibility,
+  formatWeightLb,
+  formatMoney,
+  COMMERCIAL_RATE_CENTS_PER_LB,
+  SHIPPING_PAYMENT_STATUS_LABELS,
   type StatusCode,
   type StatusTone,
   type TrackingEventDoc,
   type TransportMode,
+  type ShipmentDoc,
 } from "@shared/index";
 import { useSettings } from "@/contexts/SettingsContext";
 
@@ -233,10 +240,34 @@ export function TransportBadge({ mode }: { mode?: TransportMode | null }) {
   );
 }
 
+function formatStageDate(ts?: string | { toDate?: () => Date } | null): string | null {
+  if (!ts) return null;
+  if (typeof ts === "string") {
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime())
+      ? null
+      : d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+  }
+  const d =
+    typeof (ts as { toDate?: () => Date }).toDate === "function"
+      ? (ts as { toDate: () => Date }).toDate()
+      : null;
+  if (!d || Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+}
+
 /* ---------------------------------------------------- Shipment ProgressBar */
-export function ShipmentProgress({ status, lastStep = 0 }: { status: StatusCode; lastStep?: number }) {
+export function ShipmentProgress({
+  status,
+  lastStep = 0,
+  shipment,
+}: {
+  status: StatusCode;
+  lastStep?: number;
+  shipment?: Partial<ShipmentDoc> | null;
+}) {
   const { labelForStatus } = useSettings();
-  const current = shenaStepNumber(status, lastStep);
+  const current = timelineStepNumber(status, lastStep);
 
   if (status === "cancelled") {
     return (
@@ -251,25 +282,38 @@ export function ShipmentProgress({ status, lastStep = 0 }: { status: StatusCode;
     );
   }
 
+  const stageDates: Record<number, string | null> = {
+    1: formatStageDate(shipment?.orderConfirmedAt ?? shipment?.createdAt ?? null),
+    2: formatStageDate(shipment?.preparingAt ?? null),
+    3: formatStageDate(shipment?.miamiReceivedAt ?? shipment?.dates?.warehouseReceivedAt ?? null),
+    4: formatStageDate(shipment?.inTransitAt ?? shipment?.dates?.shippedAt ?? null),
+    5: formatStageDate(shipment?.arrivedHaitiAt ?? null),
+    6: formatStageDate(shipment?.readyForDeliveryAt ?? shipment?.dates?.availableAt ?? null),
+    7: formatStageDate(shipment?.deliveredAt ?? shipment?.dates?.deliveredAt ?? null),
+  };
+
   return (
-    <div role="region" aria-label={`Progression : ${labelForStatus(status)}`} className="space-y-2.5">
+    <div role="region" aria-label={`Progression : ${labelForStatus(status)}`} className="space-y-3">
       {(status === "delayed" || status === "info_required") && (
         <div className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-medium text-orange-900 flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 shrink-0 text-orange-600" aria-hidden="true" />
-          <span>Statut particulier en cours : {labelForStatus(status)}</span>
+          <span>Incident logistique signalé : {labelForStatus(status)}</span>
         </div>
       )}
-      <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {SHENA_LOGISTICS_STEPS.map((item) => {
-          const done = current !== null && item.shenaStep < current;
-          const active = current === item.shenaStep;
-          const isFinalReady = Boolean(item.isAvailabilityState) && active;
+      <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-7">
+        {TIMELINE_7_STEPS.map((item) => {
+          const done = current !== null && (item.step < current || (current === 7 && item.step === 7));
+          const active = current === item.step && item.step < 7;
+          const isFinalDelivered = item.step === 7 && current === 7;
+          const isReadyPickup = item.step === 6 && current === 6;
+          const dateLabel = stageDates[item.step];
+
           return (
             <li
-              key={item.shenaStep}
-              aria-current={active ? "step" : undefined}
-              className={`flex items-start gap-2.5 rounded-xl border p-3 text-xs transition ${
-                isFinalReady
+              key={item.step}
+              aria-current={active || isFinalDelivered ? "step" : undefined}
+              className={`flex items-start gap-2.5 rounded-xl border p-2.5 text-xs transition lg:flex-col ${
+                isFinalDelivered || isReadyPickup
                   ? "border-emerald-500 bg-emerald-50 text-emerald-950 shadow-xs ring-1 ring-emerald-400"
                   : active
                     ? "border-royal-600 bg-blue-50 text-navy-900 shadow-xs ring-1 ring-royal-500"
@@ -278,32 +322,148 @@ export function ShipmentProgress({ status, lastStep = 0 }: { status: StatusCode;
                       : "border-slate-200 bg-white text-slate-400"
               }`}
             >
-              <span
-                className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold ${
-                  isFinalReady
-                    ? "bg-emerald-600 text-white"
-                    : active
-                      ? "bg-royal-600 text-white"
-                      : done
-                        ? "bg-emerald-600 text-white"
+              <div className="flex items-center gap-2">
+                <span
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold ${
+                    isFinalDelivered || isReadyPickup || done
+                      ? "bg-emerald-600 text-white"
+                      : active
+                        ? "bg-royal-600 text-white"
                         : "bg-slate-100 text-slate-500"
-                }`}
-              >
-                {done || isFinalReady ? "✓" : item.shenaStep}
-              </span>
+                  }`}
+                >
+                  {done || isFinalDelivered ? "✓" : item.step}
+                </span>
+                <span className="text-[10px] font-extrabold uppercase tracking-wider opacity-75">
+                  Étape {item.step}/7
+                </span>
+              </div>
               <div className="min-w-0 flex-1 space-y-0.5">
-                <div className="text-[10px] font-extrabold uppercase tracking-wider opacity-75">
-                  {item.isAvailabilityState ? "Disponibilité finale" : `Étape ${item.shenaStep}`}
-                </div>
-                <div className="font-bold leading-snug">{item.stepTitle}</div>
+                <div className="font-bold leading-snug">{item.label}</div>
                 <div className="text-[11px] font-medium opacity-80">
-                  {done ? "Étape confirmée" : active ? (isFinalReady ? "Prêt au local" : "Étape actuelle") : "À venir"}
+                  {isFinalDelivered
+                    ? "Livré"
+                    : isReadyPickup
+                      ? "Prêt pour livraison"
+                      : done
+                        ? "Confirmée"
+                        : active
+                          ? "En cours"
+                          : "À venir"}
                 </div>
+                {dateLabel && (
+                  <div className="text-[10px] font-semibold opacity-75">{dateLabel}</div>
+                )}
               </div>
             </li>
           );
         })}
       </ol>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------- Weight & Fee Card */
+export function WeightAndFeeCard({
+  shipment,
+}: {
+  shipment: Pick<
+    ShipmentDoc,
+    | "status"
+    | "miamiReceivedAt"
+    | "actualWeightLb"
+    | "ratePerLbCents"
+    | "shippingFeeCents"
+    | "shippingCurrency"
+    | "shippingPaymentStatus"
+    | "weighedAt"
+  > & { dates?: ShipmentDoc["dates"] };
+}) {
+  const visibility = getShipmentFeeVisibility(shipment);
+
+  if (visibility === "hidden") {
+    return null;
+  }
+
+  if (visibility === "awaiting_weighing") {
+    const receivedDate = formatStageDate(shipment.miamiReceivedAt ?? shipment.dates?.warehouseReceivedAt);
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-sm text-amber-950">
+        <div className="flex items-start gap-3">
+          <Scale className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+          <div className="space-y-1">
+            <div className="font-bold">Arrivé à l&apos;entrepôt de Miami — En attente de pesée</div>
+            <p className="text-xs text-amber-900">
+              Votre colis est bien arrivé à notre entrepôt de Miami{receivedDate ? ` le ${receivedDate}` : ""}. Le poids
+              réel et les frais de livraison (6,00 USD / lb) seront affichés dès la pesée officielle.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const weightLb = shipment.actualWeightLb!;
+  const rateCents = shipment.ratePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
+  const feeCents = shipment.shippingFeeCents!;
+  const currency = shipment.shippingCurrency ?? "USD";
+  const paymentStatus = shipment.shippingPaymentStatus ?? "unpaid";
+  const paymentLabel = SHIPPING_PAYMENT_STATUS_LABELS[paymentStatus] ?? "À payer";
+  const paymentBadgeClass =
+    paymentStatus === "paid"
+      ? "bg-emerald-100 text-emerald-900 border-emerald-200"
+      : paymentStatus === "pending_verification"
+        ? "bg-blue-100 text-blue-900 border-blue-200"
+        : paymentStatus === "adjustment_required"
+          ? "bg-orange-100 text-orange-900 border-orange-200"
+          : paymentStatus === "refunded"
+            ? "bg-slate-100 text-slate-800 border-slate-200"
+            : "bg-amber-100 text-amber-900 border-amber-200";
+
+  const miamiDate = formatStageDate(shipment.miamiReceivedAt ?? shipment.dates?.warehouseReceivedAt);
+  const weighedDate = formatStageDate(shipment.weighedAt);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+        <div className="flex items-center gap-2">
+          <Scale className="h-4 w-4 text-royal-600" aria-hidden="true" />
+          <h3 className="text-sm font-extrabold text-navy-900">Pesée officielle &amp; frais de livraison</h3>
+        </div>
+        <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${paymentBadgeClass}`}>
+          {paymentLabel}
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl bg-slate-50 p-2.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Poids réel</div>
+          <div className="mt-0.5 text-base font-extrabold text-navy-900">{formatWeightLb(weightLb)}</div>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-2.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Tarif</div>
+          <div className="mt-0.5 text-base font-extrabold text-navy-900">
+            {formatMoney(rateCents, currency)} / lb
+          </div>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-2.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Calcul</div>
+          <div className="mt-0.5 text-sm font-bold text-slate-800">
+            {weightLb.toFixed(2)} × {(rateCents / 100).toFixed(2)}
+          </div>
+        </div>
+        <div className="rounded-xl border border-orange-200 bg-orange-50/70 p-2.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-orange-800">Frais de livraison</div>
+          <div className="mt-0.5 text-base font-extrabold text-orange-950">{formatMoney(feeCents, currency)}</div>
+        </div>
+      </div>
+
+      {(miamiDate || weighedDate) && (
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+          {miamiDate && <span>Réception Miami : {miamiDate}</span>}
+          {weighedDate && <span>Pesée effectuée le : {weighedDate}</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -463,16 +623,17 @@ export function WhatsappContactButton({
     setOpen(true);
   };
 
-  const url = buildWhatsappUrl(settings.whatsappNumber, message);
+  const whatsappPhone = settings.whatsappNumber || "50956125356";
+  const url = buildWhatsappUrl(whatsappPhone, message);
 
   return (
     <>
       <button
         type="button"
         onClick={openEditor}
-        disabled={!settings.whatsappNumber}
+        disabled={!whatsappPhone}
         title={
-          settings.whatsappNumber
+          whatsappPhone
             ? "Ouvrir WhatsApp avec un message prérempli"
             : "Numéro WhatsApp officiel non configuré dans les paramètres"
         }

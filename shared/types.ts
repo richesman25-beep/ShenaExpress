@@ -156,6 +156,27 @@ export interface ShipmentDoc {
   lines: ShipmentLine[];
   itemCount: number;
   weightKg?: number | null;
+  /** Poids réel en livres (lb) enregistré après pesée physique à Miami ; null avant pesée. */
+  actualWeightLb?: number | null;
+  /** Tarif par livre en centimes USD appliqué au moment de la pesée (ex. 600 = 6,00 USD/lb). */
+  ratePerLbCents?: number | null;
+  /** Frais de livraison calculés côté serveur en centimes USD ; null avant pesée. */
+  shippingFeeCents?: number | null;
+  shippingCurrency?: "USD";
+  /** Statut du paiement des frais de livraison (indépendant du statut logistique). */
+  shippingPaymentStatus?: ShippingPaymentStatus | null;
+  /** Montant effectivement payé en centimes USD (conservé même en cas de correction de poids). */
+  paidAmountCents?: number | null;
+  miamiReceivedAt?: string | null;
+  weighedAt?: string | null;
+  weighedByUid?: string | null;
+  weightHistory?: WeightCorrectionEntry[];
+  orderConfirmedAt?: string | null;
+  preparingAt?: string | null;
+  inTransitAt?: string | null;
+  arrivedHaitiAt?: string | null;
+  readyForDeliveryAt?: string | null;
+  deliveredAt?: string | null;
   dimensionsCm?: { length: number; width: number; height: number } | null;
   transportMode: TransportMode;
   status: StatusCode;
@@ -232,6 +253,25 @@ export interface ChargeLine {
 }
 
 export type PaymentStatus = "none" | "unpaid" | "partial" | "paid" | "overpaid";
+
+export type ShippingPaymentStatus =
+  | "unpaid"
+  | "pending_verification"
+  | "paid"
+  | "refunded"
+  | "adjustment_required";
+
+export interface WeightCorrectionEntry {
+  previousWeightLb: number | null;
+  newWeightLb: number;
+  previousFeeCents: number | null;
+  newFeeCents: number;
+  ratePerLbCents: number;
+  reason: string;
+  recordedAt: string;
+  recordedByUid: string;
+  recordedByEmail?: string | null;
+}
 
 /** orderFinance/{orderId} — lisible par le client seulement si le module financier est activé. */
 export interface OrderFinanceDoc {

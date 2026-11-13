@@ -27,6 +27,11 @@ import {
   completePasswordSetupSchema,
   getClientAccessState,
   CLIENT_ACCESS_LABELS,
+  parseValidWeightLb,
+  calculateShippingFeeCents,
+  getShipmentFeeVisibility,
+  COMMERCIAL_RATE_CENTS_PER_LB,
+  TIMELINE_7_STEPS,
   type OrderItem,
   type ChargeLine,
 } from "@shared/index";
@@ -36,6 +41,7 @@ import { SettingsProvider } from "@/contexts/SettingsContext";
 import {
   StatusBadge,
   ShipmentProgress,
+  WeightAndFeeCard,
   TrackingTimeline,
   WhatsappContactButton,
 } from "@/components/ui";
@@ -342,7 +348,7 @@ describe("9 & 15. Chronologie, progression des 15 statuts et composants responsi
       </SettingsProvider>,
     );
 
-    expect(screen.getAllByText("En transit aérien vers la République dominicaine").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("En transit vers Haïti").length).toBeGreaterThan(0);
     expect(screen.getByRole("region", { name: /Progression/i })).toBeInTheDocument();
 
     const items = screen.getAllByRole("listitem");
@@ -360,5 +366,140 @@ describe("9 & 15. Chronologie, progression des 15 statuts et composants responsi
       "href",
       expect.stringContaining("https://wa.me/50934567890?text="),
     );
+  });
+});
+
+describe("Calcul des frais à 6,00 USD/lb & visibilité", () => {
+  it("calcule exactement 6,00 USD/lb sans arrondi à la livre supérieure", () => {
+    const cases: Array<[number, number]> = [
+      [0.5, 300],
+      [1.25, 750],
+      [2.3, 1380],
+      [4.75, 2850],
+      [10.0, 6000],
+    ];
+    for (const [weight, expectedCents] of cases) {
+      const valid = parseValidWeightLb(weight);
+      expect(valid).toBe(weight);
+      expect(calculateShippingFeeCents(valid!, COMMERCIAL_RATE_CENTS_PER_LB)).toBe(expectedCents);
+    }
+  });
+
+  it("rejette les poids invalides, négatifs, nuls ou trop précis", () => {
+    expect(parseValidWeightLb(0)).toBeNull();
+    expect(parseValidWeightLb(-2.5)).toBeNull();
+    expect(parseValidWeightLb(Number.NaN)).toBeNull();
+    expect(parseValidWeightLb(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(parseValidWeightLb("abc")).toBeNull();
+    expect(parseValidWeightLb(1.2345)).toBeNull();
+  });
+
+  it("applique strictement la visibilité des frais avant/après réception à Miami et pesée", () => {
+    expect(
+      getShipmentFeeVisibility({
+        status: "registered",
+        miamiReceivedAt: null,
+        actualWeightLb: null,
+        shippingFeeCents: null,
+      }),
+    ).toBe("hidden");
+
+    expect(
+      getShipmentFeeVisibility({
+        status: "preparing",
+        miamiReceivedAt: null,
+        actualWeightLb: 2.3,
+        shippingFeeCents: 1380,
+      }),
+    ).toBe("hidden");
+
+    expect(
+      getShipmentFeeVisibility({
+        status: "received",
+        miamiReceivedAt: "2026-11-10T12:00:00.000Z",
+        actualWeightLb: null,
+        shippingFeeCents: null,
+      }),
+    ).toBe("awaiting_weighing");
+
+    expect(
+      getShipmentFeeVisibility({
+        status: "in_transit",
+        miamiReceivedAt: "2026-11-10T12:00:00.000Z",
+        actualWeightLb: 2.3,
+        shippingFeeCents: 1380,
+        weighedAt: "2026-11-10T14:00:00.000Z",
+      }),
+    ).toBe("ready");
+  });
+
+  it("affiche WeightAndFeeCard selon l'état (masqué, en attente de pesée, ou complet)", () => {
+    const { rerender, container } = render(
+      <SettingsProvider>
+        <WeightAndFeeCard
+          shipment={{
+            status: "registered",
+            miamiReceivedAt: null,
+            actualWeightLb: null,
+            ratePerLbCents: null,
+            shippingFeeCents: null,
+            shippingCurrency: "USD",
+            shippingPaymentStatus: null,
+            weighedAt: null,
+          }}
+        />
+      </SettingsProvider>,
+    );
+    expect(container.firstChild).toBeNull();
+
+    rerender(
+      <SettingsProvider>
+        <WeightAndFeeCard
+          shipment={{
+            status: "received",
+            miamiReceivedAt: "2026-11-10T12:00:00.000Z",
+            actualWeightLb: null,
+            ratePerLbCents: null,
+            shippingFeeCents: null,
+            shippingCurrency: "USD",
+            shippingPaymentStatus: null,
+            weighedAt: null,
+          }}
+        />
+      </SettingsProvider>,
+    );
+    expect(screen.getByText(/En attente de pesée/i)).toBeInTheDocument();
+
+    rerender(
+      <SettingsProvider>
+        <WeightAndFeeCard
+          shipment={{
+            status: "received",
+            miamiReceivedAt: "2026-11-10T12:00:00.000Z",
+            actualWeightLb: 2.3,
+            ratePerLbCents: 600,
+            shippingFeeCents: 1380,
+            shippingCurrency: "USD",
+            shippingPaymentStatus: "unpaid",
+            weighedAt: "2026-11-10T14:00:00.000Z",
+          }}
+        />
+      </SettingsProvider>,
+    );
+    expect(screen.getByText(/2,30\s*lb/i)).toBeInTheDocument();
+    expect(screen.getByText(/13,80/)).toBeInTheDocument();
+    expect(screen.getByText("À payer")).toBeInTheDocument();
+  });
+
+  it("définit exactement les 7 étapes officielles de suivi", () => {
+    expect(TIMELINE_7_STEPS.map((s) => s.label)).toEqual([
+      "Commande confirmée",
+      "En cours de préparation",
+      "Arrivé à l'entrepôt de Miami",
+      "En transit vers Haïti",
+      "Arrivé en Haïti",
+      "Prêt pour livraison",
+      "Livré",
+    ]);
   });
 });

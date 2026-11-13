@@ -2,6 +2,8 @@ import { onCall } from "firebase-functions/v2/https";
 import {
   createShipmentSchema,
   updateShipmentSchema,
+  recordShipmentWeighingSchema,
+  updateShippingPaymentSchema,
   formatShipmentId,
   defaultTrackingNumber,
   validateAllocation,
@@ -12,10 +14,17 @@ import {
   SHIPPED_STATUSES,
   DATE_FIELD_LABELS,
   formatIsoDate,
+  COMMERCIAL_RATE_CENTS_PER_LB,
+  calculateShippingFeeCents,
+  hasConfirmedMiamiReception,
+  formatMoney,
+  formatWeightLb,
   type ClientDoc,
   type ShipmentDates,
   type ShipmentLine,
   type OrderItem,
+  type WeightCorrectionEntry,
+  type ShippingPaymentStatus,
 } from "../../shared/index.js";
 import type { Transaction } from "firebase-admin/firestore";
 import { db, parse, audit, nextSequence, FieldValue, fail, requirePermission } from "./lib/core.js";
@@ -209,5 +218,202 @@ export const updateShipment = onCall(callableOptions(), async (req) => {
     });
   });
   await dispatchNotifications(notifications);
+  return { ok: true };
+});
+
+/**
+ * Enregistrement ou correction du poids réel d'un colis à l'entrepôt de Miami.
+ * - Vérifie l'autorisation (shipments.write)
+ * - Vérifie que le colis existe et que la réception à Miami est confirmée
+ * - Calcule côté serveur : frais = poids réel (lb) × 6,00 USD/lb (sans jamais arrondir le poids)
+ * - Conserve l'historique des pesées/corrections et protège l'historique des paiements.
+ */
+export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
+  const actor = requirePermission(req, "shipments.write");
+  const input = parse(recordShipmentWeighingSchema, req.data);
+  const notifications: PendingNotification[] = [];
+
+  const result = await db().runTransaction(async (tx) => {
+    const ref = db().doc(`shipments/${input.shipmentId}`);
+    const snap = await tx.get(ref);
+    if (!snap.exists) fail("not-found", "Colis introuvable.");
+    const current = snap.data() as ShipmentData & {
+      actualWeightLb?: number | null;
+      ratePerLbCents?: number | null;
+      shippingFeeCents?: number | null;
+      shippingPaymentStatus?: ShippingPaymentStatus | null;
+      paidAmountCents?: number | null;
+      miamiReceivedAt?: string | null;
+      weightHistory?: WeightCorrectionEntry[];
+    };
+    if (current.status === "cancelled") {
+      fail("failed-precondition", "Impossible de peser un colis annulé.");
+    }
+
+    const nowIso = new Date().toISOString();
+    let miamiReceivedAt = current.miamiReceivedAt ?? null;
+    let nextStatus = current.status;
+    const dates = { ...(current.dates ?? {}) };
+
+    if (!hasConfirmedMiamiReception({ status: current.status, miamiReceivedAt })) {
+      if (!input.confirmMiamiReceipt) {
+        fail("failed-precondition", "La réception physique à Miami doit être confirmée avant la pesée.");
+      }
+      miamiReceivedAt = nowIso;
+      nextStatus = "received";
+      if (!dates.warehouseReceivedAt) dates.warehouseReceivedAt = todayIso();
+    } else if (!miamiReceivedAt) {
+      miamiReceivedAt = nowIso;
+    }
+
+    const ratePerLbCents = current.ratePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
+    const shippingFeeCents = calculateShippingFeeCents(input.weightLb, ratePerLbCents);
+    const prevWeight = current.actualWeightLb ?? null;
+    const prevFee = current.shippingFeeCents ?? null;
+    const isCorrection = prevWeight !== null;
+
+    if (isCorrection && !input.reason?.trim()) {
+      fail("invalid-argument", "Un motif est obligatoire pour corriger une pesée existante.");
+    }
+
+    const entry: WeightCorrectionEntry = {
+      previousWeightLb: prevWeight,
+      newWeightLb: input.weightLb,
+      previousFeeCents: prevFee,
+      newFeeCents: shippingFeeCents,
+      ratePerLbCents,
+      reason: input.reason?.trim() || "Pesée initiale à l'entrepôt de Miami",
+      recordedAt: nowIso,
+      recordedByUid: actor.uid,
+      recordedByEmail: (req.auth?.token?.email as string | undefined) ?? null,
+    };
+    const weightHistory = [...(current.weightHistory ?? []), entry];
+
+    const paidAmountCents = current.paidAmountCents ?? 0;
+    let shippingPaymentStatus: ShippingPaymentStatus = current.shippingPaymentStatus ?? "unpaid";
+    if (shippingPaymentStatus === "paid" && isCorrection && shippingFeeCents !== paidAmountCents) {
+      shippingPaymentStatus = "adjustment_required";
+    } else if (!current.shippingPaymentStatus) {
+      shippingPaymentStatus = "unpaid";
+    }
+
+    const now = FieldValue.serverTimestamp();
+    tx.update(ref, {
+      status: nextStatus,
+      lastStep: nextStatus === "received" ? Math.max(current.lastStep ?? 1, 1) : current.lastStep,
+      dates,
+      miamiReceivedAt,
+      actualWeightLb: input.weightLb,
+      ratePerLbCents,
+      shippingFeeCents,
+      shippingCurrency: "USD",
+      shippingPaymentStatus,
+      paidAmountCents,
+      weighedAt: nowIso,
+      weighedByUid: actor.uid,
+      weightHistory,
+      updatedAt: now,
+    });
+
+    const note = isCorrection
+      ? `Poids corrigé : ${formatWeightLb(input.weightLb)} — Frais recalculés : ${formatMoney(shippingFeeCents, "USD")}.`
+      : `Colis pesé à Miami : ${formatWeightLb(input.weightLb)} — Frais de livraison : ${formatMoney(shippingFeeCents, "USD")} (6,00 USD/lb).`;
+
+    writeEvent(tx, actor, {
+      kind: "status",
+      targetType: "shipment",
+      shipmentId: current.shipmentId,
+      orderId: current.orderIds[0] ?? null,
+      clientUid: current.clientUid,
+      fromStatus: current.status,
+      toStatus: nextStatus,
+      publicNote: note,
+      internalNote: input.reason ?? null,
+    });
+
+    audit(
+      tx,
+      actor,
+      isCorrection ? "shipment.weigh_correct" : "shipment.weigh",
+      "shipment",
+      current.shipmentId,
+      note,
+      {
+        previousWeightLb: prevWeight,
+        newWeightLb: input.weightLb,
+        previousFeeCents: prevFee,
+        newFeeCents: shippingFeeCents,
+        ratePerLbCents,
+      },
+    );
+
+    notifications.push({
+      recipientUid: current.clientUid,
+      type: "shipment_received",
+      title: `Pesée enregistrée — colis ${current.trackingNumber}`,
+      body: note,
+      shipmentId: current.shipmentId,
+      orderId: current.orderIds[0] ?? null,
+      discriminator: `weigh-${input.weightLb}-${shippingFeeCents}`,
+    });
+
+    return {
+      actualWeightLb: input.weightLb,
+      ratePerLbCents,
+      shippingFeeCents,
+      shippingPaymentStatus,
+    };
+  });
+
+  await dispatchNotifications(notifications);
+  return result;
+});
+
+/** Mise à jour administrative du statut de paiement des frais de livraison d'un colis. */
+export const updateShippingPayment = onCall(callableOptions(), async (req) => {
+  const actor = requirePermission(req, "finance.write");
+  const input = parse(updateShippingPaymentSchema, req.data);
+
+  await db().runTransaction(async (tx) => {
+    const ref = db().doc(`shipments/${input.shipmentId}`);
+    const snap = await tx.get(ref);
+    if (!snap.exists) fail("not-found", "Colis introuvable.");
+    const current = snap.data() as ShipmentData & {
+      shippingFeeCents?: number | null;
+      paidAmountCents?: number | null;
+      shippingPaymentStatus?: ShippingPaymentStatus | null;
+    };
+    if (current.shippingFeeCents == null || current.shippingFeeCents <= 0) {
+      fail("failed-precondition", "Le colis doit d'abord être pesé à Miami avant d'enregistrer un paiement.");
+    }
+    const paidAmountCents =
+      input.paidAmountCents !== null && input.paidAmountCents !== undefined
+        ? input.paidAmountCents
+        : input.shippingPaymentStatus === "paid"
+          ? current.shippingFeeCents
+          : (current.paidAmountCents ?? 0);
+
+    tx.update(ref, {
+      shippingPaymentStatus: input.shippingPaymentStatus,
+      paidAmountCents,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    audit(
+      tx,
+      actor,
+      "shipment.payment_status",
+      "shipment",
+      current.shipmentId,
+      `Statut de paiement du colis ${current.trackingNumber} : ${input.shippingPaymentStatus}`,
+      {
+        previousStatus: current.shippingPaymentStatus ?? null,
+        nextStatus: input.shippingPaymentStatus,
+        paidAmountCents,
+        note: input.note ?? null,
+      },
+    );
+  });
+
   return { ok: true };
 });

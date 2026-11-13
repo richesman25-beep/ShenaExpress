@@ -36,7 +36,9 @@ export interface StatusDefinition {
   tone: StatusTone;
   /** Étape de progression (0-5) pour compatibilité technique ; null = statut hors parcours. */
   step: number | null;
-  /** Index dans le parcours simplifié SHENA Express (1 à 4) ; null si annulé. */
+  /** Étape dans la chronologie à 7 étapes (1-7) ; null si hors parcours. */
+  timelineStep: 1 | 2 | 3 | 4 | 5 | 6 | 7 | null;
+  /** Index dans le parcours simplifié (1 à 4) ; null si annulé. */
   shenaStep: 1 | 2 | 3 | 4 | null;
   /** Statut terminal : aucune progression attendue ensuite. */
   terminal?: boolean;
@@ -45,123 +47,133 @@ export interface StatusDefinition {
 export const STATUS_DEFINITIONS: Record<StatusCode, StatusDefinition> = {
   registered: {
     code: "registered",
-    label: "Reçu à l'entrepôt de Miami",
-    description: "Votre colis a été réceptionné à notre entrepôt de Miami.",
-    locationLabel: "Entrepôt de Miami",
-    tone: "received",
+    label: "Commande confirmée",
+    description: "Votre commande est confirmée et enregistrée dans notre système.",
+    locationLabel: "Commande enregistrée",
+    tone: "neutral",
     step: 0,
+    timelineStep: 1,
     shenaStep: 1,
   },
   awaiting_receipt: {
     code: "awaiting_receipt",
-    label: "En attente de réception à Miami",
-    description: "Votre commande est enregistrée et en attente de réception à notre entrepôt de Miami.",
-    locationLabel: "Entrepôt de Miami",
+    label: "Commande confirmée",
+    description: "Votre commande est confirmée et en attente de préparation.",
+    locationLabel: "En attente de préparation",
     tone: "neutral",
     step: 0,
+    timelineStep: 1,
     shenaStep: 1,
   },
   partially_received: {
     code: "partially_received",
-    label: "Reçu à l'entrepôt de Miami",
-    description: "Votre colis a été réceptionné à notre entrepôt de Miami.",
+    label: "Arrivé à l'entrepôt de Miami",
+    description: "Une partie de votre colis a été réceptionnée à notre entrepôt de Miami.",
     locationLabel: "Entrepôt de Miami",
     tone: "received",
     step: 1,
+    timelineStep: 3,
     shenaStep: 1,
   },
   received: {
     code: "received",
-    label: "Reçu à l'entrepôt de Miami",
-    description: "Votre colis a été réceptionné à notre entrepôt de Miami.",
+    label: "Arrivé à l'entrepôt de Miami",
+    description: "Votre colis est arrivé physiquement à notre entrepôt de Miami.",
     locationLabel: "Entrepôt de Miami",
     tone: "received",
     step: 1,
+    timelineStep: 3,
     shenaStep: 1,
   },
   preparing: {
     code: "preparing",
-    label: "Reçu à l'entrepôt de Miami",
-    description: "Votre colis a été réceptionné à notre entrepôt de Miami.",
-    locationLabel: "Entrepôt de Miami",
-    tone: "received",
+    label: "En cours de préparation",
+    description: "Votre commande est en cours de préparation chez le fournisseur.",
+    locationLabel: "Préparation chez le fournisseur",
+    tone: "neutral",
     step: 1,
+    timelineStep: 2,
     shenaStep: 1,
   },
   shipped: {
     code: "shipped",
-    label: "En transit aérien vers la République dominicaine",
-    description:
-      "Votre colis a quitté l'étape de réception à Miami et est en transit aérien vers la République dominicaine.",
-    locationLabel: "Transit aérien Miami → République dominicaine",
+    label: "En transit vers Haïti",
+    description: "Votre colis a quitté Miami et est en transit vers Haïti.",
+    locationLabel: "En transit vers Haïti",
     tone: "transit",
     step: 2,
+    timelineStep: 4,
     shenaStep: 2,
   },
   in_transit: {
     code: "in_transit",
-    label: "En transit aérien vers la République dominicaine",
-    description:
-      "Votre colis a quitté l'étape de réception à Miami et est en transit aérien vers la République dominicaine.",
-    locationLabel: "Transit aérien Miami → République dominicaine",
+    label: "En transit vers Haïti",
+    description: "Votre colis a quitté l'entrepôt de Miami et est en transit vers Haïti.",
+    locationLabel: "En transit vers Haïti",
     tone: "transit",
     step: 2,
+    timelineStep: 4,
     shenaStep: 2,
   },
   arrived_haiti: {
     code: "arrived_haiti",
-    label: "En route vers notre local en Haïti",
-    description: "Votre colis poursuit son acheminement en bus vers notre local en Haïti.",
-    locationLabel: "Transport terrestre (bus) → Local SHENA Express en Haïti",
+    label: "Arrivé en Haïti",
+    description: "Votre colis est arrivé en Haïti et est en cours de traitement.",
+    locationLabel: "Local SHENA Express en Haïti",
     tone: "arrived",
     step: 3,
+    timelineStep: 5,
     shenaStep: 3,
   },
   customs: {
     code: "customs",
-    label: "En route vers notre local en Haïti",
-    description: "Votre colis poursuit son acheminement en bus vers notre local en Haïti.",
-    locationLabel: "Transport terrestre (bus) → Local SHENA Express en Haïti",
+    label: "Arrivé en Haïti",
+    description: "Votre colis est arrivé en Haïti et est en cours de vérification douanière.",
+    locationLabel: "Haïti — Traitement",
     tone: "arrived",
     step: 3,
+    timelineStep: 5,
     shenaStep: 3,
   },
   available: {
     code: "available",
-    label: "Disponible pour le retrait",
-    description: "Votre colis est arrivé à notre local SHENA Express en Haïti. Vous pouvez venir le récupérer.",
-    locationLabel: "Local SHENA Express en Haïti — Prêt pour retrait",
+    label: "Prêt pour livraison",
+    description: "Votre colis est prêt pour le retrait ou la livraison finale en Haïti.",
+    locationLabel: "Local SHENA Express en Haïti — Prêt pour livraison",
     tone: "delivered",
     step: 4,
+    timelineStep: 6,
     shenaStep: 4,
-    terminal: true,
   },
   out_for_delivery: {
     code: "out_for_delivery",
-    label: "Disponible pour le retrait",
-    description: "Votre colis est arrivé à notre local SHENA Express en Haïti. Vous pouvez venir le récupérer.",
-    locationLabel: "Local SHENA Express en Haïti — Prêt pour retrait",
+    label: "Prêt pour livraison",
+    description: "Votre colis est prêt et en cours d'acheminement pour la livraison finale.",
+    locationLabel: "En cours de livraison en Haïti",
     tone: "delivered",
     step: 4,
+    timelineStep: 6,
     shenaStep: 4,
   },
   delivered: {
     code: "delivered",
-    label: "Disponible pour le retrait",
-    description: "Votre colis est arrivé à notre local SHENA Express en Haïti. Vous pouvez venir le récupérer.",
-    locationLabel: "Local SHENA Express en Haïti — Retiré",
+    label: "Livré",
+    description: "Votre colis a été remis avec succès.",
+    locationLabel: "Livré au client",
     tone: "delivered",
     step: 5,
+    timelineStep: 7,
     shenaStep: 4,
     terminal: true,
   },
   delayed: {
     code: "delayed",
     label: "Retardé",
-    description: "Un délai logistique est en cours de traitement par notre équipe.",
+    description: "Un incident ou délai logistique est en cours de traitement par notre équipe.",
     locationLabel: "Suivi opérationnel SHENA Express",
     tone: "warning",
     step: null,
+    timelineStep: null,
     shenaStep: null,
   },
   info_required: {
@@ -171,6 +183,7 @@ export const STATUS_DEFINITIONS: Record<StatusCode, StatusDefinition> = {
     locationLabel: "Suivi opérationnel SHENA Express",
     tone: "warning",
     step: null,
+    timelineStep: null,
     shenaStep: null,
   },
   cancelled: {
@@ -180,6 +193,7 @@ export const STATUS_DEFINITIONS: Record<StatusCode, StatusDefinition> = {
     locationLabel: "Annulé",
     tone: "danger",
     step: null,
+    timelineStep: null,
     shenaStep: null,
     terminal: true,
   },
@@ -236,11 +250,34 @@ export const SHENA_LOGISTICS_STEPS: readonly ShenaLogisticsStep[] = [
 ] as const;
 
 export const SHENA_PRIMARY_STATUSES: readonly StatusCode[] = [
+  "registered",
+  "preparing",
   "received",
   "in_transit",
   "arrived_haiti",
   "available",
+  "delivered",
 ] as const;
+
+/** Les 7 étapes officielles de la chronologie visuelle SHENA Express. */
+export const TIMELINE_7_STEPS = [
+  { step: 1 as const, code: "registered" as StatusCode, label: "Commande confirmée", dateField: "orderConfirmedAt" as const },
+  { step: 2 as const, code: "preparing" as StatusCode, label: "En cours de préparation", dateField: "preparingAt" as const },
+  { step: 3 as const, code: "received" as StatusCode, label: "Arrivé à l'entrepôt de Miami", dateField: "miamiReceivedAt" as const },
+  { step: 4 as const, code: "in_transit" as StatusCode, label: "En transit vers Haïti", dateField: "inTransitAt" as const },
+  { step: 5 as const, code: "arrived_haiti" as StatusCode, label: "Arrivé en Haïti", dateField: "arrivedHaitiAt" as const },
+  { step: 6 as const, code: "available" as StatusCode, label: "Prêt pour livraison", dateField: "readyForDeliveryAt" as const },
+  { step: 7 as const, code: "delivered" as StatusCode, label: "Livré", dateField: "deliveredAt" as const },
+] as const;
+
+export function timelineStepNumber(code: StatusCode, lastKnownStep = 1): 1 | 2 | 3 | 4 | 5 | 6 | 7 | null {
+  if (code === "cancelled") return null;
+  const s = STATUS_DEFINITIONS[code]?.timelineStep;
+  if (s) return s;
+  if (lastKnownStep >= 7) return 7;
+  if (lastKnownStep >= 1 && lastKnownStep <= 7) return lastKnownStep as 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  return 1;
+}
 
 /** Étapes affichées dans l'indicateur de progression client. */
 export const PROGRESS_STEPS = [
@@ -296,10 +333,13 @@ export function isAvailableForPickup(code: StatusCode): boolean {
 }
 
 export function nextLogisticsStatus(code: StatusCode): StatusCode | null {
-  const step = shenaStepNumber(code);
-  if (step === 1) return "in_transit";
-  if (step === 2) return "arrived_haiti";
-  if (step === 3) return "available";
+  const step = timelineStepNumber(code);
+  if (step === 1) return "preparing";
+  if (step === 2) return "received";
+  if (step === 3) return "in_transit";
+  if (step === 4) return "arrived_haiti";
+  if (step === 5) return "available";
+  if (step === 6) return "delivered";
   return null;
 }
 

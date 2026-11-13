@@ -154,6 +154,14 @@ describe("Sécurité Firestore (règles testées sur l'émulateur)", () => {
     // 5. Client A ne peut JAMAIS modifier son rôle, ses statuts, ses montants ou ses dates
     await assertFails(updateDoc(doc(clientADb, "users/clientA"), { role: "admin" }));
     await assertFails(updateDoc(doc(clientADb, "shipments/SHE-COLIS-2026-00001"), { status: "delivered" }));
+    await assertFails(
+      updateDoc(doc(clientADb, "shipments/SHE-COLIS-2026-00001"), {
+        actualWeightLb: 1,
+        ratePerLbCents: 100,
+        shippingFeeCents: 100,
+        shippingPaymentStatus: "paid",
+      }),
+    );
     await assertFails(updateDoc(doc(clientADb, "orderFinance/SHE-CMD-2026-00001"), { balance: 0, totalPaid: 5000 }));
     // Client A peut uniquement marquer sa propre notification comme lue avec serverTimestamp
     await assertSucceeds(updateDoc(doc(clientADb, "notifications/notifA"), { readAt: serverTimestamp() }));
