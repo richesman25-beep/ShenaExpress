@@ -1,3 +1,4 @@
+import { FlightLoader } from "@/components/FlightLoader";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { collection, doc, limit, onSnapshot, orderBy, query } from "firebase/firestore";
@@ -67,6 +68,7 @@ export function AdminLayout() {
   const navigate = useNavigate();
 
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [clients, setClients] = useState<ClientDoc[]>([]);
   const [orders, setOrders] = useState<OrderDoc[]>([]);
   const [shipments, setShipments] = useState<ShipmentDoc[]>([]);
@@ -167,19 +169,19 @@ export function AdminLayout() {
   }, [user, can]);
 
   const navItems = [
-    { to: "/admin", end: true, label: t.nav.overview, icon: LayoutDashboard, show: true },
+    { to: "/admin/vue-ensemble", end: true, label: t.nav.overview, icon: LayoutDashboard, show: advancedOpen },
     { to: "/admin/clients", end: false, label: t.nav.clients, icon: Users, show: can("clients.read") },
     { to: "/admin/commandes", end: false, label: t.nav.orders, icon: ShoppingBag, show: can("orders.read") },
-    { to: "/admin/colis", end: false, label: t.nav.shipments, icon: Package, show: can("shipments.read") },
+    { to: "/admin/colis", end: false, label: t.nav.shipments, icon: Package, show: advancedOpen && can("shipments.read") },
     {
       to: "/admin/finances",
       end: false,
       label: t.nav.finance,
       icon: CreditCard,
-      show: can("finance.read") && settings.modules.finance,
+      show: advancedOpen && can("finance.read") && settings.modules.finance,
     },
-    { to: "/admin/parametres", end: false, label: t.nav.settings, icon: Settings, show: can("settings.write") },
-    { to: "/admin/audit", end: false, label: t.nav.audit, icon: ShieldAlert, show: can("audit.read") },
+    { to: "/admin/parametres", end: false, label: t.nav.settings, icon: Settings, show: advancedOpen && can("settings.write") },
+    { to: "/admin/audit", end: false, label: t.nav.audit, icon: ShieldAlert, show: advancedOpen && can("audit.read") },
   ].filter((i) => i.show);
 
   const handleSignOut = async () => {
@@ -238,6 +240,7 @@ export function AdminLayout() {
             </nav>
 
             <div className="flex items-center gap-2">
+              <button type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(v => !v)} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold">{advancedOpen ? "Masquer les outils" : "Autres outils"}</button>
               <span className="hidden md:inline-block rounded-lg bg-white/10 px-2.5 py-1 text-xs font-bold text-amber-300 uppercase">
                 {claims?.role === "admin" ? "Administrateur" : "Employé"}
               </span>
@@ -290,7 +293,7 @@ export function AdminLayout() {
         </header>
 
         <main id="main-content" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:py-8">
-          <Outlet />
+          {loading ? <FlightLoader label="Chargement de l’administration…" /> : <Outlet />}
         </main>
       </div>
     </AdminDataContext.Provider>

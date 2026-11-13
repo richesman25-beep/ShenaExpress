@@ -53,14 +53,18 @@ export const updateStatus = onCall(callableOptions(), async (req) => {
       if (input.status === "available" && !dates.availableAt) dates.availableAt = today;
       if (input.status === "delivered" && !dates.deliveredAt) dates.deliveredAt = today;
 
+      const timestampField = ({ registered: "orderConfirmedAt", received: "miamiReceivedAt", in_transit: "inTransitAt", shipped: "inTransitAt",
+        arrived_dr: "arrivedDominicanAt", bus_to_haiti: "busToHaitiAt", available: "readyForDeliveryAt", delivered: "deliveredAt" } as const)[input.status as "registered" | "received" | "in_transit" | "shipped" | "arrived_dr" | "bus_to_haiti" | "available" | "delivered"];
+      const stageDates = timestampField && !sh[timestampField] ? { [timestampField]: new Date().toISOString() } : {};
       const updated: ShipmentData = {
         ...sh,
+        ...stageDates,
         status: input.status,
         lastStep,
         dates,
       };
       const now = FieldValue.serverTimestamp();
-      tx.update(ref, { status: input.status, lastStep, dates, updatedAt: now });
+      tx.update(ref, { status: input.status, lastStep, dates, ...stageDates, updatedAt: now });
       shipments.set(sh.shipmentId, updated);
 
       for (const o of orders.values()) {
@@ -73,6 +77,12 @@ export const updateStatus = onCall(callableOptions(), async (req) => {
             orderStatus = "delivered";
           } else if (active.length > 0 && active.every((s) => s.status === "available" || s.status === "out_for_delivery" || s.status === "delivered")) {
             orderStatus = "available";
+          } else if (active.length === 1) {
+            orderStatus = input.status;
+          } else if (active.some((s) => s.status === "bus_to_haiti")) {
+            orderStatus = "bus_to_haiti";
+          } else if (active.some((s) => s.status === "arrived_dr")) {
+            orderStatus = "arrived_dr";
           } else if (active.some((s) => s.status === "arrived_haiti" || s.status === "customs")) {
             orderStatus = "arrived_haiti";
           } else if (active.some((s) => s.status === "in_transit" || s.status === "shipped")) {

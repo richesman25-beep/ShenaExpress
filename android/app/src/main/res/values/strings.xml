@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SHENA Express</string>
+    <string name="title_activity_main">SHENA Express</string>
+    <string name="package_name">com.shenaexpress.client</string>
+    <string name="custom_url_scheme">com.shenaexpress.client</string>
+</resources>

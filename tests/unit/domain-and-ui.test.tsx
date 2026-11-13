@@ -301,9 +301,9 @@ describe("14. Gestion des erreurs et des données manquantes", () => {
   });
 });
 
-describe("9 & 15. Chronologie, progression des 15 statuts et composants responsives", () => {
-  it("couvre les 15 statuts logistiques et affiche la chronologie dans l'ordre chronologique", async () => {
-    expect(STATUS_CODES).toHaveLength(15);
+describe("9 & 15. Chronologie, progression des statuts et composants responsives", () => {
+  it("couvre les statuts historiques et les étapes dominicaine et bus et affiche la chronologie dans l'ordre chronologique", async () => {
+    expect(STATUS_CODES).toHaveLength(17);
     expect(progressStep("registered")).toBe(0);
     expect(progressStep("delivered")).toBe(5);
     expect(progressStep("delayed", 2)).toBe(2);
@@ -348,7 +348,7 @@ describe("9 & 15. Chronologie, progression des 15 statuts et composants responsi
       </SettingsProvider>,
     );
 
-    expect(screen.getAllByText("En transit vers Haïti").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("En avion — Départ des USA").length).toBeGreaterThan(0);
     expect(screen.getByRole("region", { name: /Progression/i })).toBeInTheDocument();
 
     const items = screen.getAllByRole("listitem");
@@ -491,14 +491,14 @@ describe("Calcul des frais à 6,00 USD/lb & visibilité", () => {
     expect(screen.getByText("À payer")).toBeInTheDocument();
   });
 
-  it("définit exactement les 7 étapes officielles de suivi", () => {
+  it("définit les six étapes et la remise finale facultative", () => {
     expect(TIMELINE_7_STEPS.map((s) => s.label)).toEqual([
-      "Commande confirmée",
-      "En cours de préparation",
+      "Commande placée",
       "Arrivé à l'entrepôt de Miami",
-      "En transit vers Haïti",
-      "Arrivé en Haïti",
-      "Prêt pour livraison",
+      "En avion — Départ des USA",
+      "Entrepôt en République dominicaine",
+      "En bus vers Haïti",
+      "Disponible pour le retrait",
       "Livré",
     ]);
   });

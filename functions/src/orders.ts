@@ -6,15 +6,16 @@ import {
   formatOrderId,
   allocatedByLine,
   lineKey,
-  computeOrderStats,
+  buildOrderCreation,
+  formatShipmentId,
   todayIso,
   type ClientDoc,
   type OrderItem,
   type OrderFinanceDoc,
   type StatusCode,
 } from "../../shared/index.js";
-import { db, parse, audit, nextSequence, FieldValue, fail, requirePermission } from "./lib/core.js";
-import { loadOrdersWithShipments, deriveOrder, orderSearchTokens, type OrderData } from "./lib/logistics.js";
+import { db, parse, audit, readCreationCounter, writeCreationCounter, readTrackingGuard, writeTrackingGuard, FieldValue, fail, requirePermission } from "./lib/core.js";
+import { loadOrdersWithShipments, deriveOrder, type OrderData } from "./lib/logistics.js";
 import { writeEvent } from "./lib/events.js";
 import { dispatchNotifications, type PendingNotification } from "./lib/notify.js";
 import { callableOptions } from "./lib/options.js";
@@ -31,79 +32,65 @@ export const createOrder = onCall(callableOptions(), async (req) => {
   const actor = requirePermission(req, "orders.write");
   const input = parse(createOrderSchema, req.data);
   const year = Number(todayIso().slice(0, 4));
-  const notifications: PendingNotification[] = [];
-
-  const orderId = await db().runTransaction(async (tx) => {
+  const result = await db().runTransaction(async (tx) => {
+    const guard = await readTrackingGuard(tx);
     const clientSnap = await tx.get(db().doc(`clients/${input.clientId}`));
     if (!clientSnap.exists) fail("not-found", "Client introuvable.");
     const client = clientSnap.data() as ClientDoc;
     if (client.status !== "active") fail("failed-precondition", "Le compte de ce client est désactivé.");
-    const seq = await nextSequence(tx, `orders-${year}`);
-    const id = formatOrderId(year, seq);
-    const used = new Set<string>();
-    // Aucune quantité n'est considérée reçue à la création.
-    const items: OrderItem[] = input.items.map((i) => ({
-      lineId: nextLineId(used),
-      description: i.description,
-      merchantRef: i.merchantRef,
-      quantityOrdered: i.quantityOrdered,
-      quantityReceived: 0,
-      declaredUnitValue: i.declaredUnitValue,
-    }));
-    const base: OrderData = {
-      orderId: id,
-      clientId: client.clientId,
-      clientUid: client.clientUid,
-      clientName: client.fullName,
-      merchant: input.merchant,
-      merchantOrderRef: input.merchantOrderRef,
-      orderDate: input.orderDate,
-      items,
-      currency: input.currency,
-      status: "registered",
-      transportMode: input.transportMode,
-      stats: computeOrderStats(id, items, []),
-      shipmentIds: [],
-      searchTokens: [],
-      publicNote: input.publicNote,
-    };
-    base.searchTokens = orderSearchTokens(base, []);
+    if (client.clientId !== input.clientId || !client.clientUid) fail("failed-precondition", "L'association du client à son compte est invalide. Contactez l'administrateur.");
+    const counter = await readCreationCounter(tx, "orders", year);
+    const shipmentCounter = input.trackingNumber ? await readCreationCounter(tx, "shipments", year) : null;
+    const id = formatOrderId(year, counter.next);
+    const shipmentId = shipmentCounter ? formatShipmentId(year, shipmentCounter.next) : null;
+    const paths = [`orders/${id}`, `orderPrivate/${id}`, `orderFinance/${id}`,
+      ...(shipmentId ? [`shipments/${shipmentId}`, `shipmentPrivate/${shipmentId}`] : [])];
+    const existing = await tx.getAll(...paths.map(path => db().doc(path)));
+    if (existing.some(snap => snap.exists)) fail("already-exists", "Cet identifiant est déjà utilisé. Aucune donnée n'a été remplacée. Faites vérifier les compteurs par l'administrateur.");
+    if (input.trackingNumber) {
+      const reservation = await tx.get(db().doc(`trackingNumbers/${input.trackingNumber}`));
+      if (reservation.exists) fail("already-exists", "Ce numéro de suivi est déjà utilisé par un autre colis.");
+      const duplicates = await tx.get(db().collection("shipments").where("trackingNumber", "==", input.trackingNumber));
+      if (!duplicates.empty) fail("already-exists", "Ce numéro de suivi est déjà utilisé par un autre colis.");
+    }
+    const { order, shipment } = buildOrderCreation(input, client, id, shipmentId, new Date().toISOString());
+    // Toutes les lectures sont terminées ; les écritures suivantes sont atomiques.
     const now = FieldValue.serverTimestamp();
-    tx.set(db().doc(`orders/${id}`), { ...base, createdAt: now, updatedAt: now });
-    tx.set(db().doc(`orderPrivate/${id}`), { orderId: id, internalNotes: input.internalNotes ?? "", updatedAt: now, updatedBy: actor.uid });
+    writeCreationCounter(tx, counter);
+    if (shipmentCounter) writeCreationCounter(tx, shipmentCounter);
+    tx.create(db().doc(`orders/${id}`), { ...order, createdAt: now, updatedAt: now });
+    tx.create(db().doc(`orderPrivate/${id}`), { orderId: id, internalNotes: input.internalNotes ?? "", updatedAt: now, updatedBy: actor.uid });
     const finance: Omit<OrderFinanceDoc, "updatedAt"> = {
-      orderId: id,
-      clientUid: client.clientUid,
-      clientId: client.clientId,
-      currency: input.currency,
-      charges: [],
-      totalDue: 0,
-      totalPaid: 0,
-      balance: 0,
-      paymentStatus: "none",
+      orderId: id, clientUid: client.clientUid, clientId: client.clientId,
+      currency: input.currency, charges: [], totalDue: 0, totalPaid: 0, balance: 0, paymentStatus: "none",
     };
-    tx.set(db().doc(`orderFinance/${id}`), { ...finance, updatedAt: now });
+    tx.create(db().doc(`orderFinance/${id}`), { ...finance, updatedAt: now });
+    if (shipment && shipmentId) {
+      tx.create(db().doc(`shipments/${shipmentId}`), { ...shipment, searchTokens: [shipment.trackingNumber.toLowerCase(), shipmentId.toLowerCase()], createdAt: now, updatedAt: now });
+      tx.create(db().doc(`shipmentPrivate/${shipmentId}`), { shipmentId, internalNotes: input.internalNotes ?? "", updatedAt: now, updatedBy: actor.uid });
+      tx.set(db().doc(`trackingNumbers/${shipment.trackingNumber}`), { shipmentId, createdAt: now });
+      writeEvent(tx, actor, {
+        kind: "created", targetType: "shipment", orderId: id, shipmentId,
+        clientUid: client.clientUid, toStatus: order.status,
+        publicNote: input.publicNote ?? `Colis ${shipment.trackingNumber} enregistré.`,
+      });
+    }
     writeEvent(tx, actor, {
-      kind: "created",
-      targetType: "order",
-      orderId: id,
-      clientUid: client.clientUid,
-      toStatus: "registered",
-      publicNote: input.publicNote,
+      kind: "created", targetType: "order", orderId: id, shipmentId,
+      clientUid: client.clientUid, toStatus: order.status, publicNote: input.publicNote,
     });
-    audit(tx, actor, "order.create", "order", id, `Commande ${id} créée pour ${client.clientId}`, { items: items.length });
-    notifications.push({
-      recipientUid: client.clientUid,
-      type: "order_created",
-      title: `Commande ${id} enregistrée`,
-      body: `Votre commande ${id} a été enregistrée par SHENA Express. Vous serez informé à chaque étape.`,
-      orderId: id,
-      discriminator: "created",
-    });
-    return id;
+    audit(tx, actor, "order.create", "order", id, `Commande ${id} créée pour ${client.clientId}`, { items: order.items.length });
+    writeTrackingGuard(tx, guard);
+    // Aucun effet externe dans le callback : Firestore peut le rejouer.
+    return { orderId: id, clientUid: client.clientUid };
   });
-  await dispatchNotifications(notifications);
-  return { orderId };
+  await dispatchNotifications([{
+    recipientUid: result.clientUid, type: "order_created",
+    title: `Commande ${result.orderId} enregistrée`,
+    body: `Votre commande ${result.orderId} a été enregistrée par SHENA Express. Vous serez informé à chaque étape.`,
+    orderId: result.orderId, discriminator: "created",
+  }]);
+  return { orderId: result.orderId };
 });
 
 /**

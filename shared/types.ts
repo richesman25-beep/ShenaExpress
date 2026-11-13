@@ -175,6 +175,8 @@ export interface ShipmentDoc {
   preparingAt?: string | null;
   inTransitAt?: string | null;
   arrivedHaitiAt?: string | null;
+  arrivedDominicanAt?: string | null;
+  busToHaitiAt?: string | null;
   readyForDeliveryAt?: string | null;
   deliveredAt?: string | null;
   dimensionsCm?: { length: number; width: number; height: number } | null;

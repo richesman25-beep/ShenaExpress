@@ -1,3 +1,5 @@
+import { FlightLoader } from "@/components/FlightLoader";
+import { AndroidNavigation } from "@/components/AndroidNavigation";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
 import { I18nProvider } from "@/i18n";
@@ -27,11 +29,7 @@ import {
 function RequireClient({ children }: { children: ReactNode }) {
   const { user, claims, loading } = useAuth();
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-sm font-semibold text-slate-600">
-        Vérification de votre session…
-      </div>
-    );
+    return <FlightLoader fullscreen label="Vérification de votre session…" />;
   }
   if (!user || claims?.role !== "client") {
     return <Navigate to="/connexion" replace />;
@@ -42,16 +40,17 @@ function RequireClient({ children }: { children: ReactNode }) {
 function RequireStaff({ children }: { children: ReactNode }) {
   const { user, isBackOffice, loading } = useAuth();
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-sm font-semibold text-slate-600">
-        Vérification des autorisations…
-      </div>
-    );
+    return <FlightLoader fullscreen label="Vérification des autorisations…" />;
   }
   if (!user || !isBackOffice) {
     return <Navigate to="/admin/connexion" replace />;
   }
   return <>{children}</>;
+}
+
+function SessionReady({ children }: { children: ReactNode }) {
+  const { loading } = useAuth();
+  return loading ? <FlightLoader fullscreen label="Vérification de votre session…" /> : <>{children}</>;
 }
 
 export function AppRoutes() {
@@ -90,7 +89,8 @@ export function AppRoutes() {
           </RequireStaff>
         }
       >
-        <Route index element={<AdminOverviewPage />} />
+        <Route index element={<AdminOrdersPage />} />
+        <Route path="vue-ensemble" element={<AdminOverviewPage />} />
         <Route path="clients" element={<AdminClientsPage />} />
         <Route path="commandes" element={<AdminOrdersPage />} />
         <Route path="colis" element={<AdminShipmentsPage />} />
@@ -110,9 +110,12 @@ export default function App() {
       <SettingsProvider>
         <AuthProvider>
           <ToastProvider>
+            <SessionReady>
             <BrowserRouter>
+              <AndroidNavigation />
               <AppRoutes />
             </BrowserRouter>
+            </SessionReady>
           </ToastProvider>
         </AuthProvider>
       </SettingsProvider>

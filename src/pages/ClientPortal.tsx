@@ -1,3 +1,4 @@
+import { FlightLoader } from "@/components/FlightLoader";
 import { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate, useParams } from "react-router-dom";
 import {
@@ -24,6 +25,8 @@ import {
   CreditCard,
   MapPin,
   User,
+  Plane,
+  Calculator,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -189,7 +192,7 @@ export function ClientLayout() {
 
   return (
     <ClientDataContext.Provider value={{ profile, orders, shipments, events, notifications, finances, loading }}>
-      <div className="min-h-screen flex flex-col bg-slate-50">
+      <div className="client-portal min-h-screen flex flex-col bg-slate-50">
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-royal-600 focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-white"
@@ -225,7 +228,7 @@ export function ClientLayout() {
                     end={item.end}
                     className={({ isActive }) =>
                       `inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition ${
-                        isActive ? "bg-royal-600 text-white" : "text-slate-200 hover:bg-white/10"
+                        isActive ? "bg-orange-500 text-white" : "text-slate-200 hover:bg-white/10"
                       }`
                     }
                   >
@@ -283,7 +286,7 @@ export function ClientLayout() {
                     onClick={() => setMobileOpen(false)}
                     className={({ isActive }) =>
                       `flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm font-bold ${
-                        isActive ? "bg-royal-600 text-white" : "text-slate-200 hover:bg-white/10"
+                        isActive ? "bg-orange-500 text-white" : "text-slate-200 hover:bg-white/10"
                       }`
                     }
                   >
@@ -304,7 +307,7 @@ export function ClientLayout() {
         </header>
 
         <main id="main-content" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 pb-24 sm:py-8 lg:pb-8">
-          <Outlet />
+          {loading ? <FlightLoader label="Chargement de vos commandes et colis…" /> : <Outlet />}
         </main>
 
         {/* Barre de navigation mobile */}
@@ -327,7 +330,7 @@ export function ClientLayout() {
                   end={item.end}
                   className={({ isActive }) =>
                     `relative flex flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-[11px] font-bold transition ${
-                      isActive ? "bg-royal-600/10 text-royal-600" : "text-slate-600"
+                      isActive ? "bg-orange-50 text-orange-600" : "text-slate-600"
                     }`
                   }
                 >
@@ -370,6 +373,8 @@ export function ClientDashboardPage() {
       } else if (
         s.status === "shipped" ||
         s.status === "in_transit" ||
+        s.status === "arrived_dr" ||
+        s.status === "bus_to_haiti" ||
         s.status === "arrived_haiti" ||
         s.status === "customs" ||
         s.status === "available" ||
@@ -389,22 +394,22 @@ export function ClientDashboardPage() {
   }, [orders.length, shipments]);
 
   if (loading) {
-    return <p className="text-sm text-slate-600 py-8">Chargement de votre espace personnel…</p>;
+    return <FlightLoader />;
   }
 
   return (
     <div className="space-y-6">
       {/* En-tête de bienvenue */}
-      <section className="rounded-3xl bg-navy-900 text-white p-6 sm:p-8 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <section className="client-hero rounded-3xl bg-navy-900 text-white p-6 sm:p-8 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="space-y-1.5">
           <span className="inline-block rounded-full bg-white/10 px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-amber-300">
             Identifiant : {profile?.clientId ?? claims?.clientId ?? "—"}
           </span>
           <h1 className="text-2xl sm:text-3xl font-extrabold">
-            Bienvenue{firstName ? `, ${firstName}` : ""}
+            Bonjour{firstName ? `, ${firstName}` : ""} 👋
           </h1>
           <p className="text-sm text-slate-300">
-            Suivez vos commandes, la réception à Miami, la pesée et la livraison jusqu&apos;en Haïti.
+            Bienvenue dans votre espace client. Vos colis, de Miami jusqu’à vous.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
@@ -434,6 +439,10 @@ export function ClientDashboardPage() {
         </div>
       </section>
 
+      <div className="client-route-banner">
+        <Plane aria-hidden="true" /><span>Miami <ChevronRight aria-hidden="true" /> Haïti</span>
+        <span><Calculator aria-hidden="true" /> Frais calculés selon le poids réel en livres (lb)</span>
+      </div>
       {settings.serviceMessage && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-950">
           <span className="font-bold">Note {settings.companyName} :</span> {settings.serviceMessage}
@@ -441,9 +450,8 @@ export function ClientDashboardPage() {
       )}
 
       {/* Cartes d'indicateurs calculés à partir des données réelles */}
-      <section aria-label="Indicateurs personnels" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard label="Commandes" value={kpis.ordersCount} tone="navy" />
-        <KpiCard label="Colis en préparation" value={kpis.preparing} tone="sky" />
+      <section aria-label="Indicateurs personnels" className="client-kpis grid grid-cols-3 gap-3">
+        <KpiCard label="Colis" value={shipments.length} tone="sky" />
         <KpiCard label="Colis en transit" value={kpis.inTransit} tone="blue" />
         <KpiCard label="Colis livrés" value={kpis.delivered} tone="emerald" />
       </section>
@@ -454,7 +462,7 @@ export function ClientDashboardPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-base font-extrabold text-navy-900 flex items-center gap-2">
               <Package className="h-4 w-4 text-royal-600" aria-hidden="true" />
-              <span>Mes colis</span>
+              <span>Mes derniers colis</span>
             </h2>
             <Link to="/espace-client/colis" className="text-xs font-bold text-royal-600 hover:underline">
               Voir tous les colis →
@@ -480,6 +488,8 @@ export function ClientDashboardPage() {
                       <StatusBadge status={sh.status} size="sm" />
                     </div>
                     <p className="text-xs text-slate-600">{statusDescription(sh.status)}</p>
+                    <WeightAndFeeCard shipment={sh} />
+                    <ShipmentProgress status={sh.status} lastStep={sh.lastStep} shipment={sh} />
                     {ready && (
                       <div className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-extrabold text-emerald-900">
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
@@ -1017,22 +1027,20 @@ export function ClientShipmentsPage() {
   const { settings } = useSettings();
   const { shipments } = useClientData();
   const [search, setSearch] = useState("");
+  const [tab, setTab] = useState<"all" | "active" | "delivered">("all");
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return shipments.filter(
-      (s) =>
-        !q ||
-        s.trackingNumber.toLowerCase().includes(q) ||
-        s.shipmentId.toLowerCase().includes(q) ||
-        s.orderIds.some((id) => id.toLowerCase().includes(q)),
-    );
-  }, [shipments, search]);
+    return shipments.filter((s) => {
+      const matchesTab = tab === "all" || (tab === "delivered" ? s.status === "delivered" : s.status !== "delivered" && s.status !== "cancelled");
+      return matchesTab && (!q || s.trackingNumber.toLowerCase().includes(q) || s.shipmentId.toLowerCase().includes(q) || s.orderIds.some((id) => id.toLowerCase().includes(q)));
+    });
+  }, [shipments, search, tab]);
 
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Suivi de mes colis</h1>
+        <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Mes colis</h1>
         <p className="text-xs text-slate-600">
           Consultez l&apos;étape logistique actuelle de vos colis et vérifiez s&apos;ils sont disponibles pour le retrait.
         </p>
@@ -1053,6 +1061,14 @@ export function ClientShipmentsPage() {
             className="w-full rounded-xl border border-slate-300 ps-10 pe-3 py-2 text-sm"
           />
         </div>
+      </div>
+
+      <div className="shipment-tabs" role="group" aria-label="Filtrer les colis par statut">
+        {([
+          { id: "all", label: "Tous", count: shipments.length },
+          { id: "active", label: "En cours", count: shipments.filter(s => s.status !== "delivered" && s.status !== "cancelled").length },
+          { id: "delivered", label: "Livrés", count: shipments.filter(s => s.status === "delivered").length },
+        ] as const).map(item => <button key={item.id} type="button" aria-pressed={tab === item.id} onClick={() => setTab(item.id)}>{item.label} ({item.count})</button>)}
       </div>
 
       {filtered.length === 0 ? (

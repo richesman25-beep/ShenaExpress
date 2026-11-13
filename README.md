@@ -213,3 +213,12 @@ GOOGLE_APPLICATION_CREDENTIALS=/chemin/cle.json FIREBASE_PROJECT_ID=shena-expres
 - [ ] Aucun fichier `.env`, clé de compte de service `.json` ou secret n'est présent dans `git status`.
 - [ ] Le domaine personnalisé est ajouté aux *Authorized domains* de Firebase Authentication.
 - [ ] `npm run test:all` passe intégralement au vert.
+
+## Application Android (APK)
+
+Une version Android basée sur Capacitor est disponible dans `android/`.
+Consultez [le guide Android](docs/ANDROID.md) pour les prérequis, la compilation de l’APK de test, l’installation et la signature de publication.
+
+```bash
+npm run android:apk
+```

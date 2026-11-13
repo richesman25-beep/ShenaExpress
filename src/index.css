@@ -43,3 +43,111 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Espace client : palette et surfaces inspirées de la maquette SHENA. */
+.client-portal {
+  background: radial-gradient(ellipse at top right, #d9ecfb 0, transparent 48%), #f3f6fb;
+  color: #102744;
+}
+.client-portal > header {
+  background: linear-gradient(110deg, #041b31, #103c66);
+  border-bottom: 3px solid #ff8a12;
+}
+.client-portal main { max-width: 1120px; }
+.client-portal main section.bg-white,
+.client-portal main article.bg-white {
+  border-color: #e4eaf2;
+  box-shadow: 0 7px 22px #19365409, 0 2px 4px #19365405;
+  border-radius: 22px;
+}
+.client-hero {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  min-height: 225px;
+  background: radial-gradient(ellipse at 90% 90%, #fba14266, transparent 35%), linear-gradient(115deg, #041b31 20%, #095385 100%);
+  box-shadow: 0 14px 32px #06294724;
+}
+.client-hero::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 420px;
+  height: 160px;
+  right: -90px;
+  bottom: -75px;
+  border: 1px solid #ffffff30;
+  border-radius: 50%;
+  box-shadow: 0 -24px 0 #ffffff09, 0 -48px 0 #ffffff06;
+  transform: rotate(-15deg);
+}
+.client-hero > div { position: relative; }
+.client-hero a.bg-orange-500 {
+  background: linear-gradient(180deg, #ffa51c, #ff7300);
+  box-shadow: 0 5px 12px #ff790035;
+}
+.client-kpis > div {
+  text-align: center;
+  background: linear-gradient(180deg, white, #f8fbff);
+  border: 1px solid #e2e9f1;
+  border-top: 3px solid #ff8b19;
+  border-radius: 20px;
+  box-shadow: 0 6px 14px #1634530d;
+}
+.client-route-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 20px;
+  background: #e5f2ff;
+  border-radius: 18px;
+  color: #134f7c;
+  font-size: 12px;
+  font-weight: 800;
+}
+.client-route-banner span { display: inline-flex; align-items: center; gap: 8px; }
+.client-route-banner span:last-child { margin-left: auto; }
+.client-route-banner svg { width: 20px; height: 20px; }
+.shipment-tabs { display: flex; gap: 6px; padding: 6px; border-radius: 18px; background: #e8edf5; }
+.shipment-tabs button { flex: 1; padding: 11px 8px; border-radius: 13px; font-size: 12px; font-weight: 800; cursor: pointer; }
+.shipment-tabs button[aria-pressed="true"] { color: white; background: linear-gradient(180deg, #ffa51c, #ff7300); box-shadow: 0 3px 8px #ff790030; }
+@media (max-width: 639px) {
+  .client-portal main { padding-left: 14px; padding-right: 14px; }
+  .client-hero { padding: 24px 20px; min-height: 250px; }
+  .client-hero > div:last-child { width: 100%; }
+  .client-hero a.bg-orange-500 { width: 100%; justify-content: center; }
+  .client-route-banner span:last-child { margin-left: 0; font-size: 11px; }
+  .client-kpis > div { padding: 16px 6px; }
+}
+
+/* Respecte les zones système sur les téléphones Android. */
+.client-portal > header { padding-top: env(safe-area-inset-top, 0px); }
+.client-portal > nav[aria-label="Navigation mobile"] { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* Image originale intacte ; contrôles HTML superposés à ses zones de saisie. */
+.image-login { min-height: 100svh; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #fff5e9; }
+.image-login-frame { position: relative; flex: none; width: min(100vw, calc(100svh * 1671 / 941)); aspect-ratio: 1671 / 941; container-type: inline-size; }
+.image-login-original { display: block; width: 100%; height: 100%; pointer-events: none; user-select: none; }
+.image-login-input, .image-login-eye, .image-login-submit, .image-login-forgot, .image-login-language { position: absolute; border: 0; margin: 0; background: transparent; box-shadow: none; }
+.image-login-input { color: #07143b; padding: 0 .55cqw; border-radius: .5cqw; font-family: var(--font-sans); font-size: 1.4cqw; line-height: 1.2; min-width: 0; }
+.image-login-identifier { left: 60.8%; top: 46.7%; width: 30.1%; height: 4.7%; }
+.image-login-identifier:focus, .image-login-filled { background: #fff; }
+.image-login-password { left: 60.8%; top: 59.4%; width: 27.2%; height: 4.9%; }
+.image-login-eye { left: 88.4%; top: 59%; width: 2.9%; height: 5.5%; cursor: pointer; border-radius: 8px; }
+.image-login-submit { left: 59.8%; top: 68.85%; width: 32.3%; height: 6.7%; cursor: pointer; border-radius: 1.1cqw; }
+.image-login-submit:disabled { cursor: wait; }
+.image-login-forgot { left: 67.7%; top: 78.1%; width: 16.5%; height: 3.8%; border-radius: 4px; }
+.image-login-language { left: 85.35%; top: 3.85%; width: 11.9%; height: 5.35%; color: #07143b; border-radius: .85cqw; font-size: 1.3cqw; padding: 0 1cqw; background: #fffaf6; cursor: pointer; }
+.image-login-transparent { opacity: 0; }
+.image-login-transparent:focus-visible { opacity: 1; }
+.image-login-error { position: absolute; left: 59.8%; top: 86.2%; width: 32.3%; padding: .7cqw; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f2; color: #9f1239; font-size: max(12px, .95cqw); line-height: 1.4; }
+.image-login-spinner { position: absolute; right: 5%; top: 30%; width: 1.3cqw; height: 1.3cqw; border: 2px solid #07143b40; border-top-color: #07143b; border-radius: 50%; animation: image-login-spin .7s linear infinite; }
+@keyframes image-login-spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) and (orientation: portrait) {
+  /* Cadrage sur le formulaire pour garder une saisie lisible sans modifier l'image. */
+  .image-login { align-items: flex-start; justify-content: flex-start; padding-top: max(env(safe-area-inset-top, 0px), 5svh); }
+  .image-login-frame { width: 230vw; margin-left: -125vw; }
+  .image-login-input { font-size: max(16px, 1.4cqw); }
+  .image-login-error { font-size: 13px; }
+}

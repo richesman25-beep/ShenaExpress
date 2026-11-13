@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 165">
+  <title>Miami → République dominicaine → Haïti</title>
+  <style>
+    text { font-family: system-ui, sans-serif; fill: #fff; font-size: 13px; font-weight: 650; }
+    .flight-static { display: none; }
+    @media (prefers-reduced-motion: reduce) { .flight-moving { display: none; } .flight-static { display: inline; } }
+  </style>
+  <path d="M45 90 Q110 20 180 65 Q250 20 315 90" fill="none" stroke="#ffffff20" stroke-width="4"/>
+  <path d="M45 90 Q110 20 180 65 Q250 20 315 90" fill="none" stroke="#ff8a12" stroke-width="2.5" stroke-dasharray="6 7"/>
+  <g fill="#ff8a12" stroke="#fff" stroke-width="3"><circle cx="45" cy="90" r="6"/><circle cx="180" cy="65" r="6"/><circle cx="315" cy="90" r="6"/></g>
+  <defs><g id="plane"><path d="M-20-2-5-4-13-18-7-18 7-4 21-2Q27 0 21 2L7 4-7 18-13 18-5 4-20 2-25 8-29 8-25 0-29-8-25-8Z" fill="white" stroke="#08294c" stroke-width="1.5" stroke-linejoin="round"/></g></defs>
+  <g class="flight-moving"><use href="#plane"/><animateMotion dur="4.8s" repeatCount="indefinite" rotate="auto" path="M45 90 Q110 20 180 65 Q250 20 315 90" keyPoints="0;0;.5;.5;1;1" keyTimes="0;.08;.43;.55;.9;1" calcMode="linear"/></g>
+  <g class="flight-static" transform="translate(180 65)"><use href="#plane"/></g>
+  <text x="45" y="123" text-anchor="middle">Miami</text>
+  <text x="180" y="108" text-anchor="middle"><tspan x="180">République</tspan><tspan x="180" dy="18">dominicaine</tspan></text>
+  <text x="315" y="123" text-anchor="middle">Haïti</text>
+</svg>

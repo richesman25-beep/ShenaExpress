@@ -178,6 +178,9 @@ describe("Sécurité Firestore (règles testées sur l'émulateur)", () => {
 
 describe("Parcours de bout en bout via Cloud Functions & Firebase Auth Emulator", () => {
   it("1, 2, 6, 7, 8, 9, 10, 11 & 13. Exécute le cycle complet Admin & Client", async () => {
+    // Scénario indépendant : les documents du test de règles ne doivent pas
+    // occuper les identifiants alors que les compteurs sont encore absents.
+    await testEnv.clearFirestore();
     const adminAuth = getAdminAuth();
     const adminDb = getAdminFirestore();
 

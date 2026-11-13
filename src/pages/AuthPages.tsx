@@ -1,3 +1,4 @@
+import { FlightLoader } from "@/components/FlightLoader";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -36,7 +37,9 @@ function AuthShell({
   subtitle,
   children,
   footer,
+  busy = false,
 }: {
+  busy?: boolean;
   eyebrow: string;
   title: string;
   subtitle: string;
@@ -49,6 +52,7 @@ function AuthShell({
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       <ConfigErrorBanner />
+      {busy && <FlightLoader overlay label="Connexion à l’administration…" />}
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5">
           <Link to="/connexion" aria-label="Accueil SHENA Express">
@@ -135,7 +139,7 @@ function AuthShell({
 /* ------------------------------------------------------ Connexion Client */
 export function ClientLoginPage() {
   const { user, claims, loading, signInClient, isBackOffice } = useAuth();
-  const { t } = useI18n();
+  const { t, locale, setLocale, locales } = useI18n();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -190,90 +194,40 @@ export function ClientLoginPage() {
   };
 
   return (
-    <AuthShell
-      eyebrow={t.brand.eyebrowClient}
-      title={t.auth.clientTitle}
-      subtitle={t.auth.clientSubtitle}
-      footer={
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
-          <Link to="/mot-de-passe-oublie" className="font-semibold text-royal-600 hover:underline">
-            {t.auth.forgotPassword}
-          </Link>
-        </div>
-      }
-    >
-      <form onSubmit={handleSubmit} noValidate className="space-y-4">
-        {error && (
-          <div
-            role="alert"
-            className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-medium text-rose-900"
-          >
-            <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <div>
-          <label htmlFor="client-identifier" className="block text-xs font-bold text-slate-700 mb-1.5">
-            {t.auth.identifierLabel}
-          </label>
-          <div className="relative">
-            <input
-              id="client-identifier"
-              name="identifier"
-              type="text"
-              autoComplete="username"
-              required
-              disabled={submitting || firebaseState.mode === "unconfigured"}
-              placeholder={t.auth.identifierPlaceholder}
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-royal-600"
-            />
-          </div>
-          <p className="mt-1 text-[11px] text-slate-500">
-            Identifiant remis par SHENA Express (ex. <code className="font-semibold">SHE-CLIENT-001</code>).
-          </p>
-        </div>
-
-        <div>
-          <label htmlFor="client-password" className="block text-xs font-bold text-slate-700 mb-1.5">
-            {t.auth.passwordLabel}
-          </label>
-          <div className="relative flex items-center">
-            <input
-              id="client-password"
-              name="password"
-              type={showPassword ? "text" : "password"}
-              autoComplete="current-password"
-              required
-              disabled={submitting || firebaseState.mode === "unconfigured"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white ps-3.5 pe-11 py-2.5 text-sm text-slate-900 focus:border-royal-600"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword((v) => !v)}
-              aria-label={showPassword ? t.auth.hidePassword : t.auth.showPassword}
-              aria-pressed={showPassword}
-              className="absolute right-2.5 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-            >
-              {showPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
-            </button>
-          </div>
-        </div>
-
-        <button
-          type="submit"
-          disabled={submitting || firebaseState.mode === "unconfigured"}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-royal-600 px-4 py-3 text-sm font-bold text-white shadow-xs transition hover:bg-royal-700 disabled:opacity-60"
-        >
-          <UserCheck className="h-4 w-4" aria-hidden="true" />
-          <span>{submitting ? t.auth.signingIn : t.auth.signIn}</span>
-        </button>
-      </form>
-    </AuthShell>
+    <div className="image-login">
+      <main id="main-content" className="image-login-frame" aria-labelledby="image-login-title">
+        <img className="image-login-original" src="/images/connexion-originale.png" alt="" width="1671" height="941" fetchPriority="high" />
+        <h1 id="image-login-title" className="sr-only">Connexion client</h1>
+        <label className="sr-only" htmlFor="image-login-language">Langue</label>
+        <select id="image-login-language" className={`image-login-language ${locale === "fr" ? "image-login-transparent" : ""}`}
+          value={locale} onChange={e => setLocale(e.target.value as "fr" | "ht" | "en")}>
+          {Object.entries(locales).map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+        </select>
+        <form onSubmit={handleSubmit} noValidate aria-label="Connexion client" aria-busy={submitting}>
+          <label htmlFor="client-identifier" className="sr-only">{t.auth.identifierLabel}</label>
+          <input id="client-identifier" name="identifier" type="text" autoComplete="username" required
+            disabled={submitting || firebaseState.mode === "unconfigured"}
+            aria-describedby={error ? "image-login-error" : undefined}
+            className={`image-login-input image-login-identifier ${identifier ? "image-login-filled" : ""}`}
+            value={identifier} onChange={e => setIdentifier(e.target.value)} />
+          <label htmlFor="client-password" className="sr-only">{t.auth.passwordLabel}</label>
+          <input id="client-password" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required
+            disabled={submitting || firebaseState.mode === "unconfigured"}
+            aria-describedby={error ? "image-login-error" : undefined}
+            className="image-login-input image-login-password"
+            value={password} onChange={e => setPassword(e.target.value)} />
+          <button type="button" className="image-login-eye" onClick={() => setShowPassword(v => !v)}
+            aria-label={showPassword ? t.auth.hidePassword : t.auth.showPassword} aria-pressed={showPassword} />
+          <button type="submit" className="image-login-submit" disabled={submitting || firebaseState.mode === "unconfigured"}>
+            <span className="sr-only">{submitting ? t.auth.signingIn : t.auth.signIn}</span>
+            {submitting && <span className="image-login-spinner" aria-hidden="true" />}
+          </button>
+          {error && <p role="alert" id="image-login-error" className="image-login-error">{error}</p>}
+        </form>
+        <Link className="image-login-forgot" to="/mot-de-passe-oublie"><span className="sr-only">{t.auth.forgotPassword}</span></Link>
+      </main>
+      {submitting && <FlightLoader overlay label="Connexion à votre espace client…" />}
+    </div>
   );
 }
 
@@ -320,6 +274,7 @@ export function AdminLoginPage() {
 
   return (
     <AuthShell
+      busy={submitting}
       eyebrow={t.brand.eyebrowAdmin}
       title={t.auth.adminTitle}
       subtitle={t.auth.adminSubtitle}

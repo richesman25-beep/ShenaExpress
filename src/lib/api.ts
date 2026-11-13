@@ -19,6 +19,15 @@ export function formatError(err: unknown): string {
   const code = (err as { code?: string }).code ?? "";
   const message = ((err as { message?: string }).message ?? "").trim();
 
+  if (message.includes("all reads to be executed before all writes")) {
+    return "L'enregistrement n'a pas pu être finalisé. Veuillez réessayer ou contacter l'administrateur.";
+  }
+  if (code === "aborted" || code === "firestore/aborted" || code === "functions/aborted") {
+    return "Une autre opération est en cours. Veuillez patienter puis réessayer.";
+  }
+  if (code.includes("already-exists") && (!message || message.startsWith("Firebase") || /already exists/i.test(message))) {
+    return "Ce numéro de suivi ou cet identifiant est déjà utilisé. Vérifiez les commandes existantes.";
+  }
   if (code.includes("configuration-not-found") || message.includes("CONFIGURATION_NOT_FOUND")) {
     return "Firebase Authentication (Adresse e-mail / Mot de passe) n'est pas encore activé dans la Console Firebase de votre projet (creo-store). Activez-le dans Console Firebase > Authentication > Sign-in method.";
   }
@@ -256,21 +265,24 @@ export const api = {
     { ok: boolean }
   >("updateStatus", (p) => directBackend.updateStatus(p)),
 
-  recordShipmentWeighing: call<
-    {
+  recordShipmentWeighing: (payload: {
       shipmentId: string;
       actualWeightLb: number;
       confirmMiamiReception?: boolean;
       reason?: string | null;
       publicNote?: string | null;
-    },
+    }) => call<
+    { shipmentId: string; weightLb: number; confirmMiamiReceipt?: boolean; reason?: string | null; publicNote?: string | null },
     {
       actualWeightLb: number;
       ratePerLbCents: number;
       shippingFeeCents: number;
       shippingPaymentStatus: ShippingPaymentStatus;
     }
-  >("recordShipmentWeighing", (p) => directBackend.recordShipmentWeighing(p)),
+  >("recordShipmentWeighing", (p) => directBackend.recordShipmentWeighing(p))({
+    shipmentId: payload.shipmentId, weightLb: payload.actualWeightLb,
+    confirmMiamiReceipt: payload.confirmMiamiReception, reason: payload.reason, publicNote: payload.publicNote,
+  }),
 
   updateShippingPayment: call<
     {

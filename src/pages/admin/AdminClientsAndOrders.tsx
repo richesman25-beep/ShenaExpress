@@ -24,6 +24,10 @@ import {
   CLIENT_ACCESS_LABELS,
   getClientAccessState,
   nextLogisticsStatus,
+  parseValidWeightLb,
+  calculateShippingFeeCents,
+  formatMoney,
+  COMMERCIAL_RATE_CENTS_PER_LB,
   todayIso,
   type ClientDoc,
   type OrderDoc,
@@ -31,6 +35,7 @@ import {
   type StatusCode,
 } from "@shared/index";
 import {
+  WeightAndFeeCard,
   StatusBadge,
   ShipmentProgress,
   PickupAvailabilityBanner,
@@ -968,7 +973,7 @@ export function AdminOrdersPage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Enregistrement &amp; suivi des commandes</h1>
           <p className="text-xs text-slate-600">
-            Enregistrez les commandes et colis avec leur numéro de suivi unique et pilotez les 3 étapes logistiques SHENA Express.
+            Enregistrez les commandes et colis avec leur numéro de suivi unique et suivez simplement les 6 étapes, de la commande au retrait.
           </p>
         </div>
         {canWrite && (
@@ -1119,7 +1124,7 @@ export function AdminOrdersPage() {
 
       {inspecting && (
         <OrderInspectModal
-          order={inspecting}
+          order={orders.find(o => o.orderId === inspecting.orderId) ?? inspecting}
           shipments={shipments.filter((s) => s.orderIds.includes(inspecting.orderId))}
           events={events.filter((e) => e.orderId === inspecting.orderId)}
           onClose={() => setInspecting(null)}
@@ -1150,7 +1155,7 @@ function OrderFormModal({
   const [merchantOrderRef, setMerchantOrderRef] = useState(initial?.merchantOrderRef ?? "");
   const [description, setDescription] = useState(initial?.items[0]?.description ?? "");
   const [initialStatus, setInitialStatus] = useState<StatusCode>(
-    linkedShipment?.status ?? (initial && SHENA_PRIMARY_STATUSES.includes(initial.status) ? initial.status : "received"),
+    linkedShipment?.status ?? (initial && SHENA_PRIMARY_STATUSES.includes(initial.status) ? initial.status : "registered"),
   );
   const [internalNotes, setInternalNotes] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1205,7 +1210,7 @@ function OrderFormModal({
         const res = await api.createOrder({
           clientId,
           trackingNumber: cleanTracking,
-          initialStatus,
+          initialStatus: "registered",
           description: descText,
           merchant: null,
           merchantOrderRef: merchantOrderRef.trim() || null,
@@ -1275,6 +1280,7 @@ function OrderFormModal({
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase font-mono"
             />
           </div>
+          <details><summary className="cursor-pointer text-xs font-bold text-slate-500">Ajouter une référence (facultatif)</summary>
           <div>
             <label htmlFor="of-mref" className="block text-xs font-bold text-slate-700 mb-1">
               Référence de la commande (facultative)
@@ -1287,6 +1293,7 @@ function OrderFormModal({
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
+          </details>
         </div>
 
         <div>
@@ -1302,6 +1309,7 @@ function OrderFormModal({
           />
         </div>
 
+        {initial && (
         <div>
           <label htmlFor="of-status" className="block text-xs font-bold text-slate-700 mb-1">
             Statut logistique initial *
@@ -1312,14 +1320,16 @@ function OrderFormModal({
             onChange={(e) => setInitialStatus(e.target.value as StatusCode)}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-navy-900"
           >
-            {SHENA_PRIMARY_STATUSES.map((code) => (
+            {[...SHENA_PRIMARY_STATUSES, ...(!SHENA_PRIMARY_STATUSES.includes(initialStatus) ? [initialStatus] : [])].map((code) => (
               <option key={code} value={code}>
                 {labelForStatus(code)}
               </option>
             ))}
           </select>
         </div>
+        )}
 
+        <details><summary className="cursor-pointer text-xs font-bold text-slate-500">Notes internes (facultatif)</summary>
         <div>
           <label htmlFor="of-privnote" className="block text-xs font-bold text-slate-700 mb-1">
             Notes internes (facultatives — réservées à l&apos;administrateur)
@@ -1333,6 +1343,7 @@ function OrderFormModal({
             className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
           />
         </div>
+        </details>
 
         <div className="flex justify-end gap-2 pt-2">
           <button
@@ -1362,7 +1373,7 @@ function OrderInspectModal({
   onClose,
 }: {
   order: OrderDoc;
-  shipments: { shipmentId: string; trackingNumber: string; status: StatusCode; itemCount: number; lastStep?: number }[];
+  shipments: ShipmentDoc[];
   events: Parameters<typeof TrackingTimeline>[0]["events"];
   onClose: () => void;
 }) {
@@ -1375,7 +1386,26 @@ function OrderInspectModal({
   const [publicNote, setPublicNote] = useState("");
   const [internalNote, setInternalNote] = useState("");
   const [confirmNextStatus, setConfirmNextStatus] = useState<StatusCode | null>(null);
+  const [weight, setWeight] = useState("");
+  const [weightError, setWeightError] = useState<string | null>(null);
+  const parsedWeight = parseValidWeightLb(weight);
+  const rate = primaryShipment?.ratePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
   const [busy, setBusy] = useState(false);
+  const saveMiamiWeight = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!primaryShipment || parsedWeight === null) {
+      setWeightError("Saisissez un poids positif en livres, avec au maximum 3 décimales.");
+      return;
+    }
+    setBusy(true); setWeightError(null);
+    try {
+      await api.recordShipmentWeighing({ shipmentId: primaryShipment.shipmentId, actualWeightLb: parsedWeight,
+        confirmMiamiReception: true, reason: primaryShipment.actualWeightLb != null ? "Correction du poids par l'administrateur" : null });
+      notify("success", "Réception à Miami et prix enregistrés. Le client peut les consulter.");
+      setWeight("");
+    } catch (err) { setWeightError(formatError(err)); }
+    finally { setBusy(false); }
+  };
 
   useEffect(() => {
     setStatus(currentStatus);
@@ -1440,7 +1470,25 @@ function OrderInspectModal({
         </div>
 
         <PickupAvailabilityBanner status={currentStatus} />
-        <ShipmentProgress status={currentStatus} lastStep={primaryShipment?.lastStep} />
+        <ShipmentProgress status={currentStatus} lastStep={primaryShipment?.lastStep} shipment={primaryShipment} />
+        {primaryShipment && <WeightAndFeeCard shipment={primaryShipment} />}
+        {primaryShipment && can("shipments.write") && (currentStatus === "registered" || currentStatus === "awaiting_receipt" || currentStatus === "preparing" || currentStatus === "received") && (
+          <form onSubmit={saveMiamiWeight} className="rounded-xl border border-blue-200 bg-blue-50 p-4 space-y-3">
+            <h3 className="font-extrabold text-navy-900">Réception à Miami : ajouter le poids</h3>
+            <label htmlFor="quick-weight" className="block text-xs font-bold">Poids réel en livres (lb)</label>
+            <input id="quick-weight" inputMode="decimal" placeholder="Ex. 4,75" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm" />
+            <p className="text-sm font-bold">{parsedWeight !== null ? `${weight} lb × ${formatMoney(rate, "USD")} = ${formatMoney(calculateShippingFeeCents(parsedWeight, rate), "USD")}` : `Tarif : ${formatMoney(rate, "USD")} par livre`}</p>
+            {weightError && <p role="alert" className="text-sm text-red-700">{weightError}</p>}
+            <button type="submit" disabled={busy} className="rounded-xl bg-royal-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? "Enregistrement…" : "Enregistrer le poids et le prix"}</button>
+          </form>
+        )}
+        {can("shipments.write") && primaryShipment && nextStep && currentStatus !== "registered" && currentStatus !== "awaiting_receipt" && currentStatus !== "preparing" && (
+          <button type="button" disabled={busy || (currentStatus === "received" && primaryShipment.actualWeightLb == null)} onClick={() => void executeStatusChange(nextStep)} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-50">
+            {busy ? "Enregistrement…" : `Passer à : ${labelForStatus(nextStep)}`}
+          </button>
+        )}
+        {currentStatus === "available" && <p className="text-sm font-bold text-emerald-700">Le client est informé : son colis est disponible pour le retrait.</p>}
+        <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-bold text-slate-500">Options avancées et historique</summary>
 
         {can("orders.write") && (
           <form
@@ -1515,6 +1563,7 @@ function OrderInspectModal({
           <TrackingTimeline events={events} />
         </div>
 
+        </details>
         <ConfirmDialog
           open={Boolean(confirmNextStatus)}
           title="Confirmer le changement de statut ?"

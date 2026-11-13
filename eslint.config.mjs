@@ -5,7 +5,7 @@ import globals from "globals";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "functions/lib/**", "node_modules/**", "functions/node_modules/**"],
+    ignores: ["dist/**", "android/**", "functions/lib/**", "node_modules/**", "functions/node_modules/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

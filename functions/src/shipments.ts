@@ -16,6 +16,7 @@ import {
   formatIsoDate,
   COMMERCIAL_RATE_CENTS_PER_LB,
   calculateShippingFeeCents,
+  computeOrderStats,
   hasConfirmedMiamiReception,
   formatMoney,
   formatWeightLb,
@@ -27,7 +28,7 @@ import {
   type ShippingPaymentStatus,
 } from "../../shared/index.js";
 import type { Transaction } from "firebase-admin/firestore";
-import { db, parse, audit, nextSequence, FieldValue, fail, requirePermission } from "./lib/core.js";
+import { db, parse, audit, readCreationCounter, writeCreationCounter, readTrackingGuard, writeTrackingGuard, FieldValue, fail, requirePermission } from "./lib/core.js";
 import { loadOrdersWithShipments, deriveOrder, type OrderData, type ShipmentData } from "./lib/logistics.js";
 import { writeEvent } from "./lib/events.js";
 import { dispatchNotifications, type PendingNotification } from "./lib/notify.js";
@@ -71,8 +72,10 @@ function assertDates(dates: ShipmentDates) {
 }
 
 async function reserveTracking(tx: Transaction, tn: string, shipmentId: string) {
-  const snap = await tx.get(trackingRef(tn));
-  if (snap.exists && snap.data()?.shipmentId !== shipmentId) fail("already-exists", `Le numéro de suivi ${tn} est déjà utilisé.`);
+  const reservation = await tx.get(trackingRef(tn));
+  if (reservation.exists && reservation.data()?.shipmentId !== shipmentId) fail("already-exists", `Le numéro de suivi ${tn} est déjà utilisé.`);
+  const matches = await tx.get(db().collection("shipments").where("trackingNumber", "==", tn));
+  if (matches.docs.some(snap => snap.id !== shipmentId)) fail("already-exists", `Le numéro de suivi ${tn} est déjà utilisé.`);
 }
 
 /** Création d'un colis pour un client, avec répartition optionnelle d'articles reçus. */
@@ -82,6 +85,7 @@ export const createShipment = onCall(callableOptions(), async (req) => {
   assertDates(input.dates);
   const year = Number(todayIso().slice(0, 4));
   const shipmentId = await db().runTransaction(async (tx) => {
+    const guard = await readTrackingGuard(tx);
     const clientSnap = await tx.get(db().doc(`clients/${input.clientId}`));
     if (!clientSnap.exists) fail("not-found", "Client introuvable.");
     const client = clientSnap.data() as ClientDoc;
@@ -90,8 +94,11 @@ export const createShipment = onCall(callableOptions(), async (req) => {
     const { orders, shipments } = await loadOrdersWithShipments(tx, orderIds);
     if (input.trackingNumber) await reserveTracking(tx, input.trackingNumber, "__new__");
     const lines = buildLines(input.lines, orders, [...shipments.values()], client.clientUid);
-    const seq = await nextSequence(tx, `shipments-${year}`);
+    const counter = await readCreationCounter(tx, "shipments", year);
+    const seq = counter.next;
     const id = formatShipmentId(year, seq);
+    const existing = await tx.getAll(db().doc(`shipments/${id}`), db().doc(`shipmentPrivate/${id}`));
+    if (existing.some(snap => snap.exists)) fail("already-exists", "Cet identifiant de colis est déjà utilisé. Aucune donnée n'a été remplacée.");
     const trackingNumber = input.trackingNumber ?? defaultTrackingNumber(year, seq);
     if (!input.trackingNumber) await reserveTracking(tx, trackingNumber, id);
     const status = lines.length > 0 ? "preparing" : "awaiting_receipt";
@@ -114,7 +121,8 @@ export const createShipment = onCall(callableOptions(), async (req) => {
     };
     if (status === "awaiting_receipt") data.lastStep = 0;
     const now = FieldValue.serverTimestamp();
-    tx.set(db().doc(`shipments/${id}`), { ...data, searchTokens: [trackingNumber.toLowerCase(), id.toLowerCase()], createdAt: now, updatedAt: now });
+    writeCreationCounter(tx, counter);
+    tx.create(db().doc(`shipments/${id}`), { ...data, searchTokens: [trackingNumber.toLowerCase(), id.toLowerCase()], createdAt: now, updatedAt: now });
     tx.set(trackingRef(trackingNumber), { shipmentId: id, createdAt: now });
     tx.set(db().doc(`shipmentPrivate/${id}`), { shipmentId: id, internalNotes: input.internalNotes ?? "", updatedAt: now, updatedBy: actor.uid });
     shipments.set(id, data);
@@ -131,6 +139,7 @@ export const createShipment = onCall(callableOptions(), async (req) => {
       publicNote: lines.length ? `Colis ${trackingNumber} créé avec ${data.itemCount} article(s).` : `Colis ${trackingNumber} enregistré, en attente de réception.`,
     });
     audit(tx, actor, "shipment.create", "shipment", id, `Colis ${id} (${trackingNumber}) créé pour ${client.clientId}`, { orderIds, itemCount: data.itemCount });
+    writeTrackingGuard(tx, guard);
     return id;
   });
   return { shipmentId };
@@ -143,6 +152,7 @@ export const updateShipment = onCall(callableOptions(), async (req) => {
   assertDates(input.dates);
   const notifications: PendingNotification[] = [];
   await db().runTransaction(async (tx) => {
+    const guard = await readTrackingGuard(tx);
     const ref = db().doc(`shipments/${input.shipmentId}`);
     const snap = await tx.get(ref);
     if (!snap.exists) fail("not-found", "Colis introuvable.");
@@ -216,6 +226,7 @@ export const updateShipment = onCall(callableOptions(), async (req) => {
       dateChanges: changes,
       trackingChanged: trackingNumber !== current.trackingNumber,
     });
+    writeTrackingGuard(tx, guard);
   });
   await dispatchNotifications(notifications);
   return { ok: true };
@@ -250,6 +261,10 @@ export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
       fail("failed-precondition", "Impossible de peser un colis annulé.");
     }
 
+    const { orders, shipments } = await loadOrdersWithShipments(tx, current.orderIds);
+    for (const order of orders.values()) {
+      if (order.clientUid !== current.clientUid) fail("failed-precondition", "Le colis et la commande n'appartiennent pas au même client.");
+    }
     const nowIso = new Date().toISOString();
     let miamiReceivedAt = current.miamiReceivedAt ?? null;
     let nextStatus = current.status;
@@ -314,6 +329,16 @@ export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
       weightHistory,
       updatedAt: now,
     });
+
+    shipments.set(current.shipmentId, { ...current, status: nextStatus });
+    for (const order of orders.values()) {
+      const items = order.items.map(item => ({ ...item, quantityReceived: Math.max(item.quantityReceived,
+        current.lines.filter(line => line.orderId === order.orderId && line.lineId === item.lineId).reduce((sum, line) => sum + line.quantity, 0)) }));
+      tx.update(db().doc(`orders/${order.orderId}`), {
+        items, stats: computeOrderStats(order.orderId, items, [...shipments.values()]),
+        ...(order.shipmentIds.length === 1 && order.status !== "cancelled" ? { status: nextStatus } : {}), updatedAt: now,
+      });
+    }
 
     const note = isCorrection
       ? `Poids corrigé : ${formatWeightLb(input.weightLb)} — Frais recalculés : ${formatMoney(shippingFeeCents, "USD")}.`

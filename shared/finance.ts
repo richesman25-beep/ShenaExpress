@@ -6,6 +6,8 @@ const MIAMI_RECEIVED_OR_LATER_STATUSES: readonly StatusCode[] = [
   "partially_received",
   "shipped",
   "in_transit",
+  "arrived_dr",
+  "bus_to_haiti",
   "arrived_haiti",
   "customs",
   "available",

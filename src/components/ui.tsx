@@ -284,10 +284,10 @@ export function ShipmentProgress({
 
   const stageDates: Record<number, string | null> = {
     1: formatStageDate(shipment?.orderConfirmedAt ?? shipment?.createdAt ?? null),
-    2: formatStageDate(shipment?.preparingAt ?? null),
-    3: formatStageDate(shipment?.miamiReceivedAt ?? shipment?.dates?.warehouseReceivedAt ?? null),
-    4: formatStageDate(shipment?.inTransitAt ?? shipment?.dates?.shippedAt ?? null),
-    5: formatStageDate(shipment?.arrivedHaitiAt ?? null),
+    2: formatStageDate(shipment?.miamiReceivedAt ?? shipment?.dates?.warehouseReceivedAt ?? null),
+    3: formatStageDate(shipment?.inTransitAt ?? shipment?.dates?.shippedAt ?? null),
+    4: formatStageDate(shipment?.arrivedDominicanAt ?? null),
+    5: formatStageDate(shipment?.busToHaitiAt ?? shipment?.arrivedHaitiAt ?? null),
     6: formatStageDate(shipment?.readyForDeliveryAt ?? shipment?.dates?.availableAt ?? null),
     7: formatStageDate(shipment?.deliveredAt ?? shipment?.dates?.deliveredAt ?? null),
   };
@@ -300,8 +300,8 @@ export function ShipmentProgress({
           <span>Incident logistique signalé : {labelForStatus(status)}</span>
         </div>
       )}
-      <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-7">
-        {TIMELINE_7_STEPS.map((item) => {
+      <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {TIMELINE_7_STEPS.filter(item => status === "delivered" || item.step <= 6).map((item) => {
           const done = current !== null && (item.step < current || (current === 7 && item.step === 7));
           const active = current === item.step && item.step < 7;
           const isFinalDelivered = item.step === 7 && current === 7;
@@ -335,7 +335,7 @@ export function ShipmentProgress({
                   {done || isFinalDelivered ? "✓" : item.step}
                 </span>
                 <span className="text-[10px] font-extrabold uppercase tracking-wider opacity-75">
-                  Étape {item.step}/7
+                  Étape {item.step}/{status === "delivered" ? 7 : 6}
                 </span>
               </div>
               <div className="min-w-0 flex-1 space-y-0.5">
@@ -344,7 +344,7 @@ export function ShipmentProgress({
                   {isFinalDelivered
                     ? "Livré"
                     : isReadyPickup
-                      ? "Prêt pour livraison"
+                      ? "Disponible pour le retrait"
                       : done
                         ? "Confirmée"
                         : active

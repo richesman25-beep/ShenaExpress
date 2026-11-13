@@ -96,6 +96,30 @@ export async function nextSequence(tx: Transaction, name: string): Promise<numbe
   return next;
 }
 
+/** Verrou partagé avec l'API Web, dans une collection déjà autorisée aux employés. */
+export async function readTrackingGuard(tx: Transaction) {
+  const ref = db().doc("counters/shipmentTracking");
+  const snap = await tx.get(ref);
+  return { ref, revision: Number(snap.data()?.revision ?? 0) + 1 };
+}
+export function writeTrackingGuard(tx: Transaction, guard: Awaited<ReturnType<typeof readTrackingGuard>>) {
+  tx.set(guard.ref, { revision: guard.revision, updatedAt: FieldValue.serverTimestamp() });
+}
+
+/** Lit les deux noms historiques de compteurs, sans écrire dans la transaction. */
+export async function readCreationCounter(tx: Transaction, kind: "orders" | "shipments", year: number) {
+  const refs = [db().doc(`counters/${kind}_${year}`), db().doc(`counters/${kind}-${year}`)];
+  const snaps = await tx.getAll(...refs);
+  const values = snaps.map(snap => snap.data()?.value ?? 0);
+  if (values.some(value => !Number.isSafeInteger(value) || value < 0 || value >= Number.MAX_SAFE_INTEGER)) {
+    fail("failed-precondition", "Le compteur d'identifiants est invalide. Contactez l'administrateur.");
+  }
+  return { refs, next: Math.max(...values) + 1 };
+}
+export function writeCreationCounter(tx: Transaction, counter: Awaited<ReturnType<typeof readCreationCounter>>) {
+  for (const ref of counter.refs) tx.set(ref, { value: counter.next, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+
 export const DEFAULT_PUBLIC_SETTINGS: PublicSettingsDoc = {
   companyName: "SHENA Express",
   logoUrl: null,

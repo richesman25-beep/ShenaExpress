@@ -106,7 +106,7 @@ export function AdminShipmentsPage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">Gestion des colis &amp; suivi logistique</h1>
           <p className="text-xs text-slate-600">
-            Enregistrez les colis par numéro de suivi unique et pilotez les 3 étapes de transport SHENA Express jusqu&apos;à la disponibilité au retrait.
+            Enregistrez les colis par numéro de suivi unique et pilotez les 6 étapes de suivi SHENA Express jusqu&apos;à la disponibilité au retrait.
           </p>
         </div>
         {canWrite && (
@@ -458,7 +458,7 @@ function ShipmentFormModal({
             onChange={(e) => setInitialStatus(e.target.value as StatusCode)}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-navy-900"
           >
-            {SHENA_PRIMARY_STATUSES.map((code) => (
+            {[...SHENA_PRIMARY_STATUSES, ...(!SHENA_PRIMARY_STATUSES.includes(initialStatus) ? [initialStatus] : [])].map((code) => (
               <option key={code} value={code}>
                 {labelForStatus(code)}
               </option>
