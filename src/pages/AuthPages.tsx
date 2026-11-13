@@ -1,3 +1,4 @@
+import { AndroidDownloadButton } from "@/components/AndroidDownloadButton";
 import { FlightLoader } from "@/components/FlightLoader";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
@@ -50,87 +51,40 @@ function AuthShell({
   const { locale, setLocale, locales } = useI18n();
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="premium-auth">
       <ConfigErrorBanner />
-      {busy && <FlightLoader overlay label="Connexion à l’administration…" />}
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5">
-          <Link to="/connexion" aria-label="Accueil SHENA Express">
-            <ShenaLogo subtitle="Logistique & suivi" />
-          </Link>
-          <div className="flex items-center gap-3">
-            <label htmlFor="lang-select" className="sr-only">
-              Langue
-            </label>
-            <select
-              id="lang-select"
-              value={locale}
-              onChange={(e) => setLocale(e.target.value as "fr" | "ht" | "en")}
-              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
-            >
-              {Object.entries(locales).map(([code, label]) => (
-                <option key={code} value={code}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+      {busy && <FlightLoader overlay label="Connexion à votre espace…" />}
+      <img className="premium-auth-art" src="/images/connexion-originale.png" alt="" width="1671" height="941" />
+      <header className="premium-auth-header">
+        <Link to="/connexion" aria-label="Accueil SHENA Express" className="premium-auth-brand">
+          <ShenaLogo variant="light" size="lg" />
+        </Link>
+        <label className="premium-auth-language"><span className="sr-only">Langue</span>
+          <select id="lang-select" value={locale} onChange={e => setLocale(e.target.value as "fr" | "ht" | "en")}>
+            {Object.entries(locales).map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+          </select>
+        </label>
       </header>
-
-      <main id="main-content" className="flex-1 flex items-center justify-center px-4 py-10">
-        <div className="w-full max-w-5xl grid gap-8 lg:grid-cols-12 items-center">
-          {/* Colonne identité de marque */}
-          <div className="lg:col-span-6 rounded-3xl bg-navy-900 text-white p-7 sm:p-9 shadow-xl relative overflow-hidden">
-            <div className="relative z-10 space-y-5">
-              <ShenaLogo variant="light" size="lg" subtitle="Expédition internationale" />
-              <p className="text-xs font-bold uppercase tracking-widest text-amber-300">{eyebrow}</p>
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-snug">
-                Suivez chaque commande et chaque colis, de la réception en entrepôt jusqu&apos;à la livraison en Haïti.
-              </h2>
-              <ul className="space-y-2.5 text-sm text-slate-200 pt-1">
-                <li className="flex items-center gap-2.5">
-                  <span className="h-2 w-2 rounded-full bg-gold-500" aria-hidden="true" />
-                  <span>Identifiant client personnel et espace privé sécurisé</span>
-                </li>
-                <li className="flex items-center gap-2.5">
-                  <span className="h-2 w-2 rounded-full bg-gold-500" aria-hidden="true" />
-                  <span>Distinction claire : articles commandés, reçus, expédiés et livrés</span>
-                </li>
-                <li className="flex items-center gap-2.5">
-                  <span className="h-2 w-2 rounded-full bg-gold-500" aria-hidden="true" />
-                  <span>Chronologie vérifiée et contact direct WhatsApp par commande</span>
-                </li>
-              </ul>
-              {settings.serviceMessage && (
-                <div className="rounded-2xl border border-white/15 bg-white/10 p-3.5 text-xs text-slate-100">
-                  <span className="font-bold text-amber-300">Information service : </span>
-                  {settings.serviceMessage}
-                </div>
-              )}
-              {(settings.address || settings.openingHours) && (
-                <div className="pt-2 border-t border-white/10 text-xs text-slate-300 space-y-1">
-                  {settings.address && <div>Adresse : {settings.address}</div>}
-                  {settings.serviceArea && <div>Zone desservie : {settings.serviceArea}</div>}
-                  {settings.openingHours && <div>Horaires : {settings.openingHours}</div>}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Carte de connexion */}
-          <div className="lg:col-span-6">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm">
-              <span className="inline-block rounded-full bg-blue-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-royal-600">
-                {eyebrow}
-              </span>
-              <h1 className="mt-3 text-2xl font-extrabold text-navy-900">{title}</h1>
-              <p className="mt-1.5 text-sm text-slate-600">{subtitle}</p>
-              <div className="mt-6">{children}</div>
-              {footer && <div className="mt-6 border-t border-slate-200 pt-4">{footer}</div>}
-            </div>
-          </div>
-        </div>
+      <div className="premium-auth-mobile-route" aria-label="Trajet : Miami, République dominicaine, Haïti">
+        <span>Miami</span><span aria-hidden="true">✈</span><span>République<br />dominicaine</span><span aria-hidden="true">→</span><span>Haïti</span>
+      </div>
+      <div className="premium-auth-ribbon" aria-hidden="true" />
+      <main id="main-content" className="premium-auth-main">
+        <section className="premium-auth-card" aria-labelledby="premium-auth-title">
+          <span className="sr-only">{eyebrow}</span>
+          <h1 id="premium-auth-title">{title}</h1>
+          <p className="premium-auth-subtitle">{subtitle}</p>
+          {settings.serviceMessage && <p className="premium-auth-service" role="status">{settings.serviceMessage}</p>}
+          <div className="premium-auth-fields">{children}</div>
+          {footer && <div className="premium-auth-footer">{footer}</div>}
+          {(settings.address || settings.openingHours) && (
+            <details className="premium-auth-help"><summary>Coordonnées et horaires</summary>
+              {settings.address && <p>{settings.address}</p>}
+              {settings.serviceArea && <p>{settings.serviceArea}</p>}
+              {settings.openingHours && <p>{settings.openingHours}</p>}
+            </details>
+          )}
+        </section>
       </main>
     </div>
   );
@@ -194,7 +148,7 @@ export function ClientLoginPage() {
   };
 
   return (
-    <div className="image-login">
+    <div className={`image-login${error ? " image-login-with-error" : ""}`}>
       <main id="main-content" className="image-login-frame" aria-labelledby="image-login-title">
         <img className="image-login-original" src="/images/connexion-originale.png" alt="" width="1671" height="941" fetchPriority="high" />
         <h1 id="image-login-title" className="sr-only">Connexion client</h1>
@@ -222,9 +176,12 @@ export function ClientLoginPage() {
             <span className="sr-only">{submitting ? t.auth.signingIn : t.auth.signIn}</span>
             {submitting && <span className="image-login-spinner" aria-hidden="true" />}
           </button>
-          {error && <p role="alert" id="image-login-error" className="image-login-error">{error}</p>}
         </form>
         <Link className="image-login-forgot" to="/mot-de-passe-oublie"><span className="sr-only">{t.auth.forgotPassword}</span></Link>
+        <div className={`image-login-download-area${error ? " image-login-download-area-error" : ""}`}>
+          {error && <p role="alert" id="image-login-error" className="image-login-error">{error}</p>}
+          <AndroidDownloadButton className="image-login-download" />
+        </div>
       </main>
       {submitting && <FlightLoader overlay label="Connexion à votre espace client…" />}
     </div>
@@ -277,7 +234,7 @@ export function AdminLoginPage() {
       busy={submitting}
       eyebrow={t.brand.eyebrowAdmin}
       title={t.auth.adminTitle}
-      subtitle={t.auth.adminSubtitle}
+      subtitle="Gérez vos commandes et le suivi de vos colis."
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
           <Link to="/mot-de-passe-oublie" className="font-semibold text-royal-600 hover:underline">

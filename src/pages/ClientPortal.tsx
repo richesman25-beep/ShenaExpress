@@ -1,3 +1,4 @@
+import { AndroidDownloadButton } from "@/components/AndroidDownloadButton";
 import { FlightLoader } from "@/components/FlightLoader";
 import { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate, useParams } from "react-router-dom";
@@ -439,6 +440,7 @@ export function ClientDashboardPage() {
         </div>
       </section>
 
+      <AndroidDownloadButton className="client-home-download" />
       <div className="client-route-banner">
         <Plane aria-hidden="true" /><span>Miami <ChevronRight aria-hidden="true" /> Haïti</span>
         <span><Calculator aria-hidden="true" /> Frais calculés selon le poids réel en livres (lb)</span>

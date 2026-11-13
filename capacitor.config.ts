@@ -5,7 +5,11 @@ const config: CapacitorConfig = {
   appName: 'SHENA Express',
   webDir: 'dist',
   server: { androidScheme: 'https' },
-  android: { backgroundColor: '#0f2342' },
+  android: {
+    backgroundColor: '#0f2342',
+    // Android 15 : garder l'interface hors des barres système et de l'encoche.
+    adjustMarginsForEdgeToEdge: 'auto',
+  },
 };
 
 export default config;

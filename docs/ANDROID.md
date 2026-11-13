@@ -41,3 +41,13 @@ Le build debug est destiné aux essais. Pour publier, créer et conserver une cl
 Les notifications existantes restent visibles dans l’application. Les notifications push Android et l’ouverture des liens de réinitialisation du mot de passe directement dans l’application ne sont pas configurées dans cette première version.
 
 Vérifier sur un téléphone : connexion/déconnexion, persistance de session, liste et détail des colis, retour Android, ouverture de WhatsApp et liens de récupération du mot de passe.
+
+## En-tête et barres Android
+
+La configuration `android.adjustMarginsForEdgeToEdge: auto` réserve les marges nécessaires autour de la WebView sous Android 15 quand le mode bord à bord est imposé. Le haut de page, les encoches et la navigation système ne doivent pas masquer le contenu. Les versions Android précédentes conservent la gestion native des marges. Vérifier le résultat sur le téléphone concerné, en portrait et en paysage.
+
+## Téléchargement depuis le site
+
+Le bouton de la page d’accueil et du tableau de bord client télécharge directement `public/downloads/SHENA-Express-1.1.apk`, sans compte Google Drive. Ce fichier doit être inclus dans la publication du site. Pour une nouvelle version, remplacer le fichier public et mettre à jour le nom, la version et la taille affichés dans `AndroidDownloadButton.tsx`.
+
+Le bouton est masqué à l’intérieur d’une application native. Le paquet Android exclut les fichiers `*.apk` des ressources embarquées afin de ne pas inclure une ancienne version de lui-même.
