@@ -435,7 +435,7 @@ describe("Calcul des frais à 6,00 USD/lb & visibilité", () => {
 
   it("affiche WeightAndFeeCard selon l'état (masqué, en attente de pesée, ou complet)", () => {
     const { rerender, container } = render(
-      <SettingsProvider>
+      <SettingsProvider staticSettings={{}}>
         <WeightAndFeeCard
           shipment={{
             status: "registered",
@@ -453,7 +453,7 @@ describe("Calcul des frais à 6,00 USD/lb & visibilité", () => {
     expect(container.firstChild).toBeNull();
 
     rerender(
-      <SettingsProvider>
+      <SettingsProvider staticSettings={{}}>
         <WeightAndFeeCard
           shipment={{
             status: "received",
@@ -471,7 +471,7 @@ describe("Calcul des frais à 6,00 USD/lb & visibilité", () => {
     expect(screen.getByText(/En attente de pesée/i)).toBeInTheDocument();
 
     rerender(
-      <SettingsProvider>
+      <SettingsProvider staticSettings={{}}>
         <WeightAndFeeCard
           shipment={{
             status: "received",

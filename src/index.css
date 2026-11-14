@@ -226,3 +226,10 @@
   .image-login-download strong { font-size: 13px; }
   .image-login-download small { font-size: 11px; }
 }
+
+.accounting-page label { min-width: 0; font-size: 13px; font-weight: 600; }
+.accounting-page form > * { min-width: 0; }
+.accounting-page input:not([type='checkbox']), .accounting-page select, .accounting-page textarea { width: 100%; max-width: 100%; font-size: 16px; font-weight: 400; }
+.accounting-page table { min-width: 900px; line-height: 1.6; }
+.accounting-page td { padding: 10px 8px; vertical-align: top; }
+.accounting-page progress { accent-color: #ff8500; }

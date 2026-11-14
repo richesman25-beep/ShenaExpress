@@ -169,6 +169,7 @@ export function AdminLayout() {
   }, [user, can]);
 
   const navItems = [
+    { to: "/admin/comptabilite", end: false, label: "Comptabilité", icon: CreditCard, show: can("finance.read") },
     { to: "/admin/vue-ensemble", end: true, label: t.nav.overview, icon: LayoutDashboard, show: advancedOpen },
     { to: "/admin/clients", end: false, label: t.nav.clients, icon: Users, show: can("clients.read") },
     { to: "/admin/commandes", end: false, label: t.nav.orders, icon: ShoppingBag, show: can("orders.read") },

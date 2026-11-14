@@ -146,13 +146,16 @@ service cloud.firestore {
     // Finances et frais des commandes (orderFinance/{orderId})
     match /orderFinance/{orderId} {
       allow read: if isStaff() || isOwnClientResource();
-      allow create, update, delete: if isStaff();
+      allow create: if isStaff() && !request.resource.data.get('accountingManaged', false);
+      allow update, delete: if isStaff() && !resource.data.get('accountingManaged', false);
     }
 
     // Colis / expéditions (shipments/{shipmentId})
     match /shipments/{shipmentId} {
       allow read: if isStaff() || isOwnClientResource();
-      allow create, update, delete: if isStaff();
+      allow create: if isStaff() && !request.resource.data.get('accountingManaged', false);
+      allow update: if isStaff() && (!resource.data.get('accountingManaged', false) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountingManaged','paidAmountCents','shippingPaymentStatus','actualWeightLb','shippingFeeCents','ratePerLbCents','clientUid','clientId','orderIds','lines']));
+      allow delete: if isStaff() && !resource.data.get('accountingManaged', false);
     }
 
     // Notes internes sur les colis (shipmentPrivate/{shipmentId})
@@ -174,7 +177,8 @@ service cloud.firestore {
     // Enregistrements de paiements (paymentRecords/{paymentId})
     match /paymentRecords/{paymentId} {
       allow read: if isStaff() || isOwnClientResource();
-      allow create, update, delete: if isStaff();
+      allow create: if isStaff() && !('accountingInvoiceId' in request.resource.data);
+      allow update, delete: if isStaff() && !('accountingInvoiceId' in resource.data);
     }
 
     // Notifications clients (notifications/{notificationId})
@@ -216,6 +220,19 @@ service cloud.firestore {
     // File d'envoi d'e-mails (mail/{mailId})
     match /mail/{mailId} {
       allow read, write: if isStaff();
+    }
+
+    // Comptabilité globale : lecture autorisée, écritures uniquement via Functions Admin SDK.
+    function accountingReader() {
+      return signedIn() && userActive()
+        && (request.auth.token.get('role', '') == 'admin' || isDesignatedAdminEmail()
+          || (request.auth.token.get('role', '') == 'staff' && 'finance.read' in request.auth.token.get('perms', [])))
+        && (!userDocExists() || userRole() == 'admin'
+          || (userRole() == 'staff' && 'finance.read' in userDoc().get('permissions', [])));
+    }
+    match /{book}/{entry} {
+      allow read: if book in ['accountingInvoices','accountingEntries','accountingGoals','accountingSettings','accountingAudit'] && accountingReader();
+      allow write: if false;
     }
 
     // Refus explicite de tout autre accès non prévu

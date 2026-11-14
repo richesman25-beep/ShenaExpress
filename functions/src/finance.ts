@@ -34,6 +34,7 @@ export const setOrderCharges = onCall(callableOptions(), async (req) => {
     const order = orderSnap.data() as OrderData;
     const finRef = db().doc(`orderFinance/${input.orderId}`);
     const finSnap = await tx.get(finRef);
+    if (finSnap.data()?.accountingManaged) fail("failed-precondition", "Utilisez le module Comptabilité pour cette commande facturée.");
     const paymentsSnap = await tx.get(db().collection("paymentRecords").where("orderId", "==", input.orderId));
 
     const used = new Set<string>();
@@ -90,6 +91,7 @@ export const recordPayment = onCall(callableOptions(), async (req) => {
 
     const finRef = db().doc(`orderFinance/${input.orderId}`);
     const finSnap = await tx.get(finRef);
+    if (finSnap.data()?.accountingManaged) fail("failed-precondition", "Utilisez le module Comptabilité pour cette commande facturée.");
     const paymentsSnap = await tx.get(db().collection("paymentRecords").where("orderId", "==", input.orderId));
 
     const charges = (finSnap.data() as OrderFinanceDoc | undefined)?.charges ?? [];
@@ -157,6 +159,7 @@ export const voidPayment = onCall(callableOptions(), async (req) => {
 
     const finRef = db().doc(`orderFinance/${pay.orderId}`);
     const finSnap = await tx.get(finRef);
+    if (finSnap.data()?.accountingManaged) fail("failed-precondition", "Utilisez le module Comptabilité pour cette commande facturée.");
     const paymentsSnap = await tx.get(db().collection("paymentRecords").where("orderId", "==", pay.orderId));
 
     const charges = (finSnap.data() as OrderFinanceDoc | undefined)?.charges ?? [];

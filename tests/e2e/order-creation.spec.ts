@@ -34,7 +34,7 @@ test("crée une commande, calcule le prix à Miami et suit les six étapes chez 
     await client.locator("#client-password").fill("ClientDemo#2026");
     await client.getByRole("button", { name: "Se connecter", exact: true }).click();
     await expect(client).toHaveURL(/\/espace-client$/);
-    await client.goto("http://127.0.0.1:4173/espace-client/colis");
+    await client.goto(new URL("/espace-client/colis", client.url()).href);
     await expect(client.getByRole("link", { name: `Numéro de suivi : ${tracking}`, exact: true })).toBeVisible();
     await client.getByRole("link", { name: `Numéro de suivi : ${tracking}`, exact: true }).click();
     await expect(client.getByRole("heading", { name: tracking, exact: true })).toBeVisible();

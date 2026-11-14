@@ -19,3 +19,4 @@ export { createShipment, updateShipment, recordShipmentWeighing, updateShippingP
 export { updateStatus } from "./tracking.js";
 export { setOrderCharges, recordPayment, voidPayment } from "./finance.js";
 export { updateSettings, setStaffRole } from "./settings.js";
+export { accountingCommand } from "./accounting.js";

@@ -165,6 +165,7 @@ export const updateShipment = onCall(callableOptions(), async (req) => {
 
     const linesChanged = JSON.stringify(input.lines.map((l) => [l.orderId, l.lineId, l.quantity]).sort()) !==
       JSON.stringify(current.lines.map((l) => [l.orderId, l.lineId, l.quantity]).sort());
+    if (linesChanged && snap.data()?.accountingManaged) fail("failed-precondition", "Colis facturé : les articles et la commande associés sont figés. Une correction comptable documentée est nécessaire.");
     if (linesChanged && SHIPPED_STATUSES.includes(current.status)) {
       fail("failed-precondition", "Le contenu d'un colis expédié ne peut plus être modifié.");
     }
@@ -248,6 +249,7 @@ export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
     const ref = db().doc(`shipments/${input.shipmentId}`);
     const snap = await tx.get(ref);
     if (!snap.exists) fail("not-found", "Colis introuvable.");
+    if (snap.data()?.accountingManaged) fail("failed-precondition", "Colis facturé : son poids est figé dans la comptabilité. Contactez le responsable financier pour une correction documentée.");
     const current = snap.data() as ShipmentData & {
       actualWeightLb?: number | null;
       ratePerLbCents?: number | null;
@@ -281,7 +283,8 @@ export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
       miamiReceivedAt = nowIso;
     }
 
-    const ratePerLbCents = current.ratePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
+    const pricing = await tx.get(db().doc("settings/public"));
+    const ratePerLbCents = current.ratePerLbCents ?? pricing.data()?.shippingRatePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
     const shippingFeeCents = calculateShippingFeeCents(input.weightLb, ratePerLbCents);
     const prevWeight = current.actualWeightLb ?? null;
     const prevFee = current.shippingFeeCents ?? null;
@@ -402,6 +405,7 @@ export const updateShippingPayment = onCall(callableOptions(), async (req) => {
   await db().runTransaction(async (tx) => {
     const ref = db().doc(`shipments/${input.shipmentId}`);
     const snap = await tx.get(ref);
+    if (snap.data()?.accountingManaged) fail("failed-precondition", "Enregistrez les paiements dans Comptabilité pour ce colis facturé.");
     if (!snap.exists) fail("not-found", "Colis introuvable.");
     const current = snap.data() as ShipmentData & {
       shippingFeeCents?: number | null;

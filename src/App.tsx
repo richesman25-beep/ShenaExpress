@@ -1,3 +1,4 @@
+import { AccountingPage } from "@/pages/admin/Accounting";
 import { FlightLoader } from "@/components/FlightLoader";
 import { AndroidNavigation } from "@/components/AndroidNavigation";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
@@ -94,6 +95,7 @@ export function AppRoutes() {
         <Route path="clients" element={<AdminClientsPage />} />
         <Route path="commandes" element={<AdminOrdersPage />} />
         <Route path="colis" element={<AdminShipmentsPage />} />
+        <Route path="comptabilite/:section?" element={<AccountingPage />} />
         <Route path="finances" element={<AdminFinancePage />} />
         <Route path="parametres" element={<AdminSettingsPage />} />
         <Route path="audit" element={<AdminAuditPage />} />

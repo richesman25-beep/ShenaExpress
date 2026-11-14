@@ -142,7 +142,10 @@ export function calculateShippingFeeCents(
     throw new Error("Tarif par livre invalide.");
   }
   const weightThousandths = Math.round(validWeight * 1000);
-  return Math.round((weightThousandths * ratePerLbCents) / 1000);
+  // Même arrondi décimal que la facture comptable : demi-centime vers le haut.
+  const cents = Number((BigInt(weightThousandths) * BigInt(ratePerLbCents) + 500n) / 1000n);
+  if (!Number.isSafeInteger(cents)) throw new Error("Montant de shipping trop important.");
+  return cents;
 }
 
 export function formatWeightLb(weightLb: number, locale = "fr-FR"): string {

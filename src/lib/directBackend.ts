@@ -1042,6 +1042,7 @@ export const directBackend = {
             ]
           : current.lines;
 
+      if (snap.data()?.accountingManaged && JSON.stringify(nextLines) !== JSON.stringify(current.lines)) throw new Error("Colis facturé : les articles associés sont figés dans la comptabilité.");
       const now = serverTimestamp();
       tx.update(ref, {
         trackingNumber: input.trackingNumber || current.trackingNumber,
@@ -1204,6 +1205,7 @@ export const directBackend = {
       const ref = doc(db, "shipments", input.shipmentId);
       const snap = await tx.get(ref);
       if (!snap.exists()) throw new Error("Colis introuvable.");
+      if (snap.data()?.accountingManaged) throw new Error("Utilisez Comptabilité : les données financières de ce colis facturé sont figées.");
       const current = snap.data() as ShipmentDoc;
       if (current.status === "cancelled") {
         throw new Error("Impossible de peser un colis annulé.");
@@ -1236,7 +1238,8 @@ export const directBackend = {
         miamiReceivedAt = nowIso;
       }
 
-      const ratePerLbCents = current.ratePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
+      const pricing = await tx.get(doc(db, "settings", "public"));
+      const ratePerLbCents = current.ratePerLbCents ?? pricing.data()?.shippingRatePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
       const shippingFeeCents = calculateShippingFeeCents(input.weightLb, ratePerLbCents);
       const prevWeight = current.actualWeightLb ?? null;
       const prevFee = current.shippingFeeCents ?? null;
@@ -1358,6 +1361,7 @@ export const directBackend = {
       const ref = doc(db, "shipments", input.shipmentId);
       const snap = await getDoc(ref);
       if (!snap.exists()) throw new Error("Colis introuvable.");
+      if (snap.data()?.accountingManaged) throw new Error("Utilisez Comptabilité : les données financières de ce colis facturé sont figées.");
       const current = snap.data() as ShipmentDoc;
       if (current.shippingFeeCents == null || current.shippingFeeCents <= 0) {
         throw new Error("Le colis doit d'abord être pesé à Miami avant d'enregistrer un paiement.");
@@ -1401,6 +1405,7 @@ export const directBackend = {
     const input = parseInput(setChargesSchema, raw);
     const db = getFirebaseDb();
     return withFirestoreCheck(async () => {
+      if ((await getDoc(doc(db, "orderFinance", input.orderId))).data()?.accountingManaged) throw new Error("Utilisez le module Comptabilité pour cette commande facturée.");
       const ordSnap = await getDoc(doc(db, "orders", input.orderId));
       if (!ordSnap.exists()) throw new Error("Commande introuvable.");
       const order = ordSnap.data() as OrderDoc;
@@ -1438,6 +1443,7 @@ export const directBackend = {
     const input = parseInput(recordPaymentSchema, raw);
     const db = getFirebaseDb();
     return withFirestoreCheck(async () => {
+      if ((await getDoc(doc(db, "orderFinance", input.orderId))).data()?.accountingManaged) throw new Error("Utilisez le module Comptabilité pour cette commande facturée.");
       const ordSnap = await getDoc(doc(db, "orders", input.orderId));
       if (!ordSnap.exists()) throw new Error("Commande introuvable.");
       const order = ordSnap.data() as OrderDoc;
@@ -1464,6 +1470,7 @@ export const directBackend = {
         getDoc(doc(db, "orderFinance", input.orderId)),
         getDocs(query(collection(db, "paymentRecords"), where("orderId", "==", input.orderId))),
       ]);
+      if (finSnap.data()?.accountingManaged) throw new Error("Utilisez le module Comptabilité pour cette commande facturée.");
       const charges = (finSnap.data()?.charges as ChargeLine[] | undefined) ?? [];
       const payments = paymentsSnap.docs.map((d) => d.data() as PaymentRecordDoc);
       const due = totalDue(charges);
@@ -1499,6 +1506,7 @@ export const directBackend = {
         getDoc(doc(db, "orderFinance", pay.orderId)),
         getDocs(query(collection(db, "paymentRecords"), where("orderId", "==", pay.orderId))),
       ]);
+      if (finSnap.data()?.accountingManaged) throw new Error("Utilisez le module Comptabilité pour cette commande facturée.");
       const charges = (finSnap.data()?.charges as ChargeLine[] | undefined) ?? [];
       const payments = paymentsSnap.docs.map((d) => d.data() as PaymentRecordDoc);
       const due = totalDue(charges);
