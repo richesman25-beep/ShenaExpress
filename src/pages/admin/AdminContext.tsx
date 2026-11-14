@@ -155,15 +155,19 @@ export function AdminLayout() {
       );
     }
 
-    unsubs.push(
-      onSnapshot(
-        doc(db, "settings", "private"),
-        (snap) => {
-          setPrivateSettings(snap.exists() ? (snap.data() as PrivateSettingsDoc) : null);
-        },
-        () => setPrivateSettings(null),
-      ),
-    );
+    if (can("settings.write")) {
+      unsubs.push(
+        onSnapshot(
+          doc(db, "settings", "private"),
+          (snap) => {
+            setPrivateSettings(snap.exists() ? (snap.data() as PrivateSettingsDoc) : null);
+          },
+          () => setPrivateSettings(null),
+        ),
+      );
+    } else {
+      setPrivateSettings(null);
+    }
 
     return () => unsubs.forEach((u) => u());
   }, [user, can]);

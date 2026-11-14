@@ -1527,12 +1527,12 @@ export const directBackend = {
     const input = parseInput(settingsUpdateSchema, raw);
     const db = getFirebaseDb();
     return withFirestoreCheck(async () => {
-      await setDoc(doc(db, "settings", "public"), { ...input.publicSettings, isExample: false, updatedAt: serverTimestamp() });
-      try {
-        await setDoc(doc(db, "clientPrivate", "__settings_private__"), { ...input.privateSettings, updatedAt: serverTimestamp() });
-      } catch {
-        // Ignore si non requis
-      }
+      const batch = writeBatch(db);
+      // Conserver les tarifs réservés à la comptabilité et enregistrer les deux
+      // documents atomiquement, dans les collections utilisées par le serveur.
+      batch.set(doc(db, "settings", "public"), { ...input.publicSettings, isExample: false, updatedAt: serverTimestamp() }, { merge: true });
+      batch.set(doc(db, "settings", "private"), { ...input.privateSettings, updatedAt: serverTimestamp() }, { merge: true });
+      await batch.commit();
       return { ok: true };
     });
   },

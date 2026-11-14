@@ -74,7 +74,7 @@ Le seed est réservé aux émulateurs. Le compte local de démonstration est `ad
 
 Pour explorer vous-même les pages, laisser les émulateurs ouverts, exécuter le seed une seule fois puis lancer `VITE_USE_EMULATORS=true npm run dev` dans un autre terminal. Ouvrir l'adresse affichée par Vite, se connecter à `/admin/connexion` et choisir Comptabilité. Les données de démonstration restent locales. Éviter de lancer la recette automatisée en même temps que votre recette manuelle : les tests réinitialisent la base des émulateurs.
 
-Vérification du 14 novembre 2026 : compilations frontend/Functions, ESLint et 27 tests unitaires réussis ; 29 tests ciblés sur les émulateurs réussis ; quatre parcours navigateur ordinateur/mobile réussis, dont affichage du paiement et du solde dans l'espace client. Le cycle historique Admin & Client réussit également. Le test historique de règles conserve l'échec `staff` décrit ci-dessous. Les parcours mobiles sont des simulations Chromium ; aucun test matériel Windows/Android ni nouvel APK n'a été effectué dans cette mission.
+Vérification du 14 novembre 2026 : compilations frontend/Functions, ESLint et 27 tests unitaires réussis ; 41 tests sur la suite complète des émulateurs réussis après correction du rôle staff ; quatre parcours navigateur ordinateur/mobile réussis, dont affichage du paiement et du solde dans l'espace client. Le cycle historique Admin & Client réussit également. Le test historique de règles concernant `staff` passe désormais. Les parcours mobiles sont des simulations Chromium ; aucun test matériel Windows/Android ni nouvel APK n'a été effectué dans cette mission.
 
 ## Reprise et limites à valider avant publication
 
@@ -84,7 +84,7 @@ Les colis regroupant plusieurs commandes et les anciennes commandes libellées H
 
 Les exports réunissent les indicateurs, factures et opérations de la période, puis les créances et dettes détaillées à la date de fin, y compris celles émises avant la période. Le PDF repose sur l'impression du navigateur. Les abonnements chargent le registre autorisé en entier pour calculer les soldes ; une agrégation serveur et une pagination seront nécessaires pour un volume important.
 
-La suite historique de sécurité contient un échec préexistant concernant le rôle `staff` dans les anciennes règles `isStaff` : ce rôle n'est pas reconnu et un claim `email` absent peut produire une erreur d'évaluation. Cette fonction historique n'a pas été modifiée. Les tests spécifiques de permissions comptables ne réutilisent pas cette condition et vérifient la restriction des nouvelles collections. Ne pas considérer la suite globale comme entièrement verte tant que ce point historique n'est pas résolu. Pour reproduire : `npx firebase emulators:exec --project demo-shena --only auth,firestore,functions 'npx vitest run --project emulator tests/emulator/security-and-workflows.test.ts'`.
+Le défaut historique des permissions `staff` est corrigé. Les champs absents dans les claims/profils sont lus avec des valeurs par défaut. Les accès sont attribués collection par collection suivant les permissions `clients.*`, `orders.*`, `shipments.*`, `finance.*`, `audit.read` et `settings.write`, sans ajouter `staff` au groupe historique des utilisateurs disposant de tous les droits. Lorsque le profil utilisateur existe, sa permission doit aussi être active : un ancien token ne suffit pas après révocation ou désactivation. Les accès historiques `admin`, `operator` et `finance_manager` sont conservés. Les employés ne peuvent pas modifier les rôles ni les tarifs comptables réservés à l'administrateur. Le contexte administrateur ne demande plus les paramètres privés sans autorisation. La sauvegarde directe des paramètres fusionne atomiquement `settings/public` et `settings/private`, afin de conserver le tarif déjà enregistré. Aucun profil existant n'a été modifié. Pour vérifier toute la suite Firebase : `npm run test:emulators`.
 
 ## Fichiers concernés
 
@@ -94,6 +94,7 @@ La suite historique de sécurité contient un échec préexistant concernant le 
 - `firestore.rules` : accès et protection des documents gérés par la comptabilité.
 - `src/pages/admin/Accounting.tsx`, `src/pages/admin/AdminContext.tsx`, `src/App.tsx`, `src/index.css` : pages, navigation et présentation responsive.
 - `tests/unit/accounting.test.ts`, `tests/emulator/accounting.test.ts`, `tests/e2e/accounting.spec.ts`, `playwright.accounting.config.ts` : vérifications locales.
+- `tests/emulator/staff-permissions.test.ts` : dix tests de permissions limitées, absence de claims, révocation, désactivation, protection des tarifs et compatibilité des anciens rôles.
 - `tests/unit/domain-and-ui.test.tsx` : paramètres statiques pour isoler le test visuel de Firebase et éviter un abonnement réseau après la fermeture de jsdom.
 - `tests/e2e/order-creation.spec.ts` : navigation client sur l'origine du serveur de test, sans port imposé.
 - `docs/COMPTABILITE.md` : ce guide.

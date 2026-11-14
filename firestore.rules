@@ -8,8 +8,8 @@ service cloud.firestore {
 
     function isDesignatedAdminEmail() {
       return signedIn()
-        && request.auth.token.email != null
-        && request.auth.token.email == 'shenyderj2000@gmail.com';
+        && request.auth.token.get('email', '') != ''
+        && request.auth.token.get('email', '') == 'shenyderj2000@gmail.com';
     }
 
     function userDocExists() {
@@ -22,28 +22,47 @@ service cloud.firestore {
     }
 
     function userRole() {
-      return userDocExists() ? userDoc().role : null;
+      return userDocExists() ? userDoc().get('role', '') : '';
     }
 
     function userActive() {
-      return !userDocExists() || userDoc().disabled != true;
+      return !userDocExists() || userDoc().get('disabled', false) != true;
     }
 
     function isStaff() {
       return signedIn()
         && userActive()
         && (
-          request.auth.token.role in ['admin', 'operator', 'finance_manager']
+          request.auth.token.get('role', '') in ['admin', 'operator', 'finance_manager']
           || isDesignatedAdminEmail()
           || userRole() in ['admin', 'operator', 'finance_manager']
         );
+    }
+
+    // Les permissions du rôle staff sont explicites : ne jamais l'ajouter
+    // à isStaff(), qui conserve les droits historiques des anciens rôles.
+    function staffPermission(permission) {
+      return signedIn() && userActive()
+        && request.auth.token.get('role', '') == 'staff'
+        && permission in request.auth.token.get('perms', [])
+        && (!userDocExists() || (userRole() == 'staff'
+          && permission in userDoc().get('permissions', [])));
+    }
+
+    function canAccess(permission) {
+      return isStaff() || staffPermission(permission);
+    }
+
+    function canWriteOperations() {
+      return canAccess('clients.write') || canAccess('orders.write')
+        || canAccess('shipments.write');
     }
 
     function isAdmin() {
       return signedIn()
         && userActive()
         && (
-          request.auth.token.role == 'admin'
+          request.auth.token.get('role', '') == 'admin'
           || isDesignatedAdminEmail()
           || userRole() == 'admin'
         );
@@ -72,9 +91,9 @@ service cloud.firestore {
 
     // Fiches clients (clients/{clientId})
     match /clients/{clientId} {
-      allow read: if isStaff() || isOwnClientResource();
-      allow create, delete: if isStaff();
-      allow update: if isStaff()
+      allow read: if canAccess('clients.read') || isOwnClientResource();
+      allow create, delete: if canAccess('clients.write');
+      allow update: if canAccess('clients.write')
         || (
           isOwnClientResource()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['passwordConfigured', 'updatedAt'])
@@ -89,104 +108,110 @@ service cloud.firestore {
     // Correspondance identifiant client -> compte Firebase Auth (clientAuth/{clientId})
     match /clientAuth/{clientId} {
       allow get: if true;
-      allow list: if isStaff();
-      allow create, update, delete: if isStaff();
+      allow list: if canAccess('clients.read');
+      allow create, update, delete: if canAccess('clients.write');
     }
 
     // Jetons d'invitation et de définition de mot de passe à usage unique (clientPasswordTokens/{tokenId})
     match /clientPasswordTokens/{tokenId} {
       allow get: if true;
-      allow list: if isStaff();
-      allow create: if isStaff()
+      allow list: if canAccess('clients.write');
+      allow create: if canAccess('clients.write')
         || (
           request.resource.data.keys().hasOnly(['clientId', 'clientUid', 'authEmail', 'oobCode', 'createdAt', 'expiresAt', 'usedAt'])
           && request.resource.data.usedAt == null
           && request.resource.data.clientId is string
         );
-      allow update: if isStaff()
+      allow update: if canAccess('clients.write')
         || (
           resource.data.usedAt == null
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedAt'])
           && request.resource.data.usedAt != null
         );
-      allow delete: if isStaff();
+      allow delete: if canAccess('clients.write');
     }
 
     // Notes administratives privées sur les clients (clientNotes/{clientId} et clientPrivate/{clientId})
     match /clientNotes/{clientId} {
-      allow read, write: if isStaff();
+      allow read: if canAccess('clients.read');
+      allow write: if canAccess('clients.write');
     }
 
     match /clientPrivate/{clientId} {
-      allow read, write: if isStaff();
+      allow read: if canAccess('clients.read');
+      allow write: if canAccess('clients.write');
     }
 
     // Index d'unicité des numéros de téléphone et e-mails
     match /clientPhones/{phoneKey} {
-      allow read, write: if isStaff();
+      allow read: if canAccess('clients.read');
+      allow write: if canAccess('clients.write');
     }
 
     match /clientEmails/{emailKey} {
       allow get: if true;
-      allow list: if isStaff();
-      allow create, update, delete: if isStaff();
+      allow list: if canAccess('clients.read');
+      allow create, update, delete: if canAccess('clients.write');
     }
 
     // Commandes clients (orders/{orderId})
     match /orders/{orderId} {
-      allow read: if isStaff() || isOwnClientResource();
-      allow create, update, delete: if isStaff();
+      allow read: if canAccess('orders.read') || isOwnClientResource();
+      allow create, update, delete: if canAccess('orders.write');
     }
 
     // Notes internes sur les commandes (orderPrivate/{orderId})
     match /orderPrivate/{orderId} {
-      allow read, write: if isStaff();
+      allow read: if canAccess('orders.read');
+      allow write: if canAccess('orders.write');
     }
 
     // Finances et frais des commandes (orderFinance/{orderId})
     match /orderFinance/{orderId} {
-      allow read: if isStaff() || isOwnClientResource();
-      allow create: if isStaff() && !request.resource.data.get('accountingManaged', false);
-      allow update, delete: if isStaff() && !resource.data.get('accountingManaged', false);
+      allow read: if canAccess('finance.read') || isOwnClientResource();
+      allow create: if canAccess('finance.write') && !request.resource.data.get('accountingManaged', false);
+      allow update, delete: if canAccess('finance.write') && !resource.data.get('accountingManaged', false);
     }
 
     // Colis / expéditions (shipments/{shipmentId})
     match /shipments/{shipmentId} {
-      allow read: if isStaff() || isOwnClientResource();
-      allow create: if isStaff() && !request.resource.data.get('accountingManaged', false);
-      allow update: if isStaff() && (!resource.data.get('accountingManaged', false) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountingManaged','paidAmountCents','shippingPaymentStatus','actualWeightLb','shippingFeeCents','ratePerLbCents','clientUid','clientId','orderIds','lines']));
-      allow delete: if isStaff() && !resource.data.get('accountingManaged', false);
+      allow read: if canAccess('shipments.read') || isOwnClientResource();
+      allow create: if canAccess('shipments.write') && !request.resource.data.get('accountingManaged', false);
+      allow update: if canAccess('shipments.write') && (!resource.data.get('accountingManaged', false) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountingManaged','paidAmountCents','shippingPaymentStatus','actualWeightLb','shippingFeeCents','ratePerLbCents','clientUid','clientId','orderIds','lines']));
+      allow delete: if canAccess('shipments.write') && !resource.data.get('accountingManaged', false);
     }
 
     // Notes internes sur les colis (shipmentPrivate/{shipmentId})
     match /shipmentPrivate/{shipmentId} {
-      allow read, write: if isStaff();
+      allow read: if canAccess('shipments.read');
+      allow write: if canAccess('shipments.write');
     }
 
     // Historique et événements de suivi (shipmentEvents/{eventId})
     match /shipmentEvents/{eventId} {
-      allow read: if isStaff() || isOwnClientResource();
-      allow create, update, delete: if isStaff();
+      allow read: if canAccess('orders.read') || canAccess('shipments.read') || isOwnClientResource();
+      allow create, update, delete: if canAccess('orders.write') || canAccess('shipments.write');
     }
 
     // Événements internes de suivi (shipmentEventsPrivate/{eventId})
     match /shipmentEventsPrivate/{eventId} {
-      allow read, write: if isStaff();
+      allow read: if canAccess('orders.read') || canAccess('shipments.read');
+      allow write: if canAccess('orders.write') || canAccess('shipments.write');
     }
 
     // Enregistrements de paiements (paymentRecords/{paymentId})
     match /paymentRecords/{paymentId} {
-      allow read: if isStaff() || isOwnClientResource();
-      allow create: if isStaff() && !('accountingInvoiceId' in request.resource.data);
-      allow update, delete: if isStaff() && !('accountingInvoiceId' in resource.data);
+      allow read: if canAccess('finance.read') || isOwnClientResource();
+      allow create: if canAccess('finance.write') && !('accountingInvoiceId' in request.resource.data);
+      allow update, delete: if canAccess('finance.write') && !('accountingInvoiceId' in resource.data);
     }
 
     // Notifications clients (notifications/{notificationId})
     match /notifications/{notificationId} {
-      allow read: if isStaff()
+      allow read: if canAccess('clients.read') || canAccess('orders.read') || canAccess('shipments.read')
         || (signedIn() && userActive() && resource.data.recipientUid == request.auth.uid);
-      allow create, delete: if isStaff();
-      allow update: if isStaff()
+      allow create, delete: if canWriteOperations();
+      allow update: if canWriteOperations()
         || (
           signedIn()
           && userActive()
@@ -197,29 +222,33 @@ service cloud.firestore {
 
     // Journal d'audit administratif immuable (auditLogs/{logId})
     match /auditLogs/{logId} {
-      allow read: if isStaff();
-      allow create: if isStaff();
+      allow read: if canAccess('audit.read');
+      allow create: if canWriteOperations() || canAccess('finance.write');
       allow update, delete: if false;
     }
 
     // Paramètres publics et privés de l'application (settings/public et settings/private)
     match /settings/public {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create: if isAdmin() || (staffPermission('settings.write')
+        && !request.resource.data.keys().hasAny(['shippingRatePerLbCents']));
+      allow update: if isAdmin() || (staffPermission('settings.write')
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['shippingRatePerLbCents']));
+      allow delete: if isAdmin();
     }
 
     match /settings/private {
-      allow read, write: if isAdmin();
+      allow read, write: if isAdmin() || staffPermission('settings.write');
     }
 
     // Compteurs de séquences d'identifiants (counters/{counterId})
     match /counters/{counterId} {
-      allow read, write: if isStaff();
+      allow read, write: if canWriteOperations();
     }
 
     // File d'envoi d'e-mails (mail/{mailId})
     match /mail/{mailId} {
-      allow read, write: if isStaff();
+      allow read, write: if canAccess('clients.write');
     }
 
     // Comptabilité globale : lecture autorisée, écritures uniquement via Functions Admin SDK.
