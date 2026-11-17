@@ -1,3 +1,5 @@
+import { ShipmentIdentity, OrderShippingTotal } from "@/components/ui";
+import { externalTracking } from "@shared/index";
 import { AndroidDownloadButton } from "@/components/AndroidDownloadButton";
 import { FlightLoader } from "@/components/FlightLoader";
 import { useEffect, useMemo, useState } from "react";
@@ -485,7 +487,7 @@ export function ClientDashboardPage() {
                         to={`/espace-client/colis/${sh.shipmentId}`}
                         className="text-sm font-extrabold text-navy-900 hover:text-royal-600"
                       >
-                        Suivi : {sh.trackingNumber}
+                        <ShipmentIdentity shipment={sh}/>
                       </Link>
                       <StatusBadge status={sh.status} size="sm" />
                     </div>
@@ -895,6 +897,7 @@ export function ClientOrderDetailPage() {
         </div>
       </section>
 
+      <OrderShippingTotal shipments={orderShipments}/>
       {/* Colis associés */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
         <h2 className="text-base font-extrabold text-navy-900">
@@ -909,13 +912,13 @@ export function ClientOrderDetailPage() {
             {orderShipments.map((sh) => {
               const ready = isAvailableForPickup(sh.status);
               return (
-                <div key={sh.shipmentId} className="rounded-xl border border-slate-200 p-4 space-y-3">
+                <div key={sh.shipmentId} data-package-id={sh.shipmentId} className="rounded-xl border border-slate-200 p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <Link
                       to={`/espace-client/colis/${sh.shipmentId}`}
                       className="text-sm font-extrabold text-navy-900 hover:text-royal-600"
                     >
-                      Suivi : {sh.trackingNumber}
+                      <ShipmentIdentity shipment={sh}/>
                     </Link>
                     <StatusBadge status={sh.status} size="sm" />
                   </div>
@@ -1035,7 +1038,7 @@ export function ClientShipmentsPage() {
     const q = search.trim().toLowerCase();
     return shipments.filter((s) => {
       const matchesTab = tab === "all" || (tab === "delivered" ? s.status === "delivered" : s.status !== "delivered" && s.status !== "cancelled");
-      return matchesTab && (!q || s.trackingNumber.toLowerCase().includes(q) || s.shipmentId.toLowerCase().includes(q) || s.orderIds.some((id) => id.toLowerCase().includes(q)));
+      return matchesTab && (!q || `${s.shipmentId} ${externalTracking(s)??''}`.toLowerCase().includes(q) || s.shipmentId.toLowerCase().includes(q) || s.orderIds.some((id) => id.toLowerCase().includes(q)));
     });
   }, [shipments, search, tab]);
 
@@ -1088,7 +1091,7 @@ export function ClientShipmentsPage() {
                         to={`/espace-client/colis/${sh.shipmentId}`}
                         className="text-base font-extrabold text-navy-900 hover:text-royal-600"
                       >
-                        Numéro de suivi : {sh.trackingNumber}
+                        <ShipmentIdentity shipment={sh}/>
                       </Link>
                       <StatusBadge status={sh.status} />
                     </div>
@@ -1167,12 +1170,13 @@ export function ClientShipmentDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <div className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-              Numéro de suivi
+              Numéro SHENA
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-xl sm:text-2xl font-extrabold text-navy-900">
-                {sh.trackingNumber}
+                {sh.shipmentId}
               </h1>
+              <p className="text-xs text-slate-600">Tracking externe : {externalTracking(sh) ?? 'Non renseigné'}</p>
               <StatusBadge status={sh.status} />
             </div>
             <p className="text-xs font-semibold text-slate-600 flex items-center gap-1.5 pt-0.5">

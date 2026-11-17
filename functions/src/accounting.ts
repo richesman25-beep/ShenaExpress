@@ -5,6 +5,7 @@ import {
   shippingAmount,
   toUsd,
   hasPermission,
+  hasConfirmedMiamiReception,
 } from "../../shared/index.js";
 import { db, requirePermission, audit, FieldValue, fail } from "./lib/core.js";
 import { callableOptions } from "./lib/options.js";
@@ -126,8 +127,8 @@ export const accountingCommand = onCall(callableOptions(), async (req) => {
       const ship = await tx.get(db().doc(`shipments/${input.targetId}`));
       if (!ship.exists) fail("not-found", "Colis introuvable.");
       const s = ship.data()!;
-      if (s.status === "cancelled" || !s.weighedAt || !s.actualWeightLb)
-        fail("failed-precondition", "Le colis doit être pesé et actif.");
+      if (s.status === "cancelled" || !s.weighedAt || !s.actualWeightLb || !hasConfirmedMiamiReception(s as import('../../shared/types.js').ShipmentDoc) || s.rateConfirmedAt === null)
+        fail("failed-precondition", "Le colis doit être reçu à Miami, pesé, actif et son tarif confirmé.");
       if (s.orderIds?.length !== 1)
         fail(
           "failed-precondition",

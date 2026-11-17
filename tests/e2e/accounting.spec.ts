@@ -87,6 +87,10 @@ test("facture un colis, enregistre un acompte et exporte le rapport comptable", 
     await clientContext.close();
   }
   await page.goto("/admin/comptabilite/rapports");
+  // Attendre le snapshot comptable avant de demander un export.
+  await expect(
+    page.getByRole("row").filter({ hasText: shipmentId }).first(),
+  ).toContainText("18,50");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByRole("button", { name: "Exporter CSV" }).click(),

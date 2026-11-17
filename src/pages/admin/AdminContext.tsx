@@ -207,23 +207,23 @@ export function AdminLayout() {
         </a>
 
         <header className="sticky top-0 z-30 border-b border-slate-200 bg-navy-900 text-white">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-            <div className="flex items-center gap-3">
+          <div className="mx-auto flex min-w-0 max-w-7xl items-center justify-between gap-2 px-3 py-3 sm:px-4">
+            <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => setMobileOpen((v) => !v)}
                 aria-label={mobileOpen ? "Fermer le menu" : "Ouvrir le menu"}
                 aria-expanded={mobileOpen}
-                className="lg:hidden rounded-lg p-2 text-slate-200 hover:bg-white/10"
+                className="lg:hidden shrink-0 rounded-lg p-1.5 text-slate-200 hover:bg-white/10"
               >
                 {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </button>
-              <Link to="/admin">
+              <Link to="/admin" className="min-w-0 overflow-hidden">
                 <ShenaLogo variant="light" size="sm" subtitle="Administration" />
               </Link>
             </div>
 
-            <nav aria-label="Navigation administration" className="hidden lg:flex items-center gap-1">
+            <nav aria-label="Navigation administration" className="hidden min-w-0 lg:flex flex-wrap items-center gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -244,8 +244,8 @@ export function AdminLayout() {
               })}
             </nav>
 
-            <div className="flex items-center gap-2">
-              <button type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(v => !v)} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold">{advancedOpen ? "Masquer les outils" : "Autres outils"}</button>
+            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+              <button type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(v => !v)} className="hidden sm:block rounded-xl bg-white/10 px-3 py-2 text-xs font-bold">{advancedOpen ? "Masquer les outils" : "Autres outils"}</button>
               <span className="hidden md:inline-block rounded-lg bg-white/10 px-2.5 py-1 text-xs font-bold text-amber-300 uppercase">
                 {claims?.role === "admin" ? "Administrateur" : "Employé"}
               </span>
@@ -253,7 +253,7 @@ export function AdminLayout() {
                 aria-label="Langue"
                 value={locale}
                 onChange={(e) => setLocale(e.target.value as "fr" | "ht" | "en")}
-                className="rounded-lg border border-white/20 bg-navy-800 px-2 py-1 text-xs font-semibold text-white"
+                className="w-[88px] min-w-0 sm:w-auto rounded-lg border border-white/20 bg-navy-800 px-2 py-1 text-xs font-semibold text-white"
               >
                 {Object.entries(locales).map(([code, label]) => (
                   <option key={code} value={code}>
@@ -264,7 +264,8 @@ export function AdminLayout() {
               <button
                 type="button"
                 onClick={handleSignOut}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20"
+                aria-label={t.nav.signOut}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-2 sm:px-3 py-2 text-xs font-bold text-white hover:bg-white/20"
               >
                 <LogOut className="h-4 w-4" aria-hidden="true" />
                 <span className="hidden sm:inline">{t.nav.signOut}</span>
@@ -274,6 +275,7 @@ export function AdminLayout() {
 
           {mobileOpen && (
             <nav aria-label="Menu mobile administration" className="lg:hidden border-t border-white/10 bg-navy-950 px-4 py-3 space-y-1">
+              <button type="button" aria-expanded={advancedOpen} onClick={()=>setAdvancedOpen(v=>!v)} className="sm:hidden w-full rounded-xl bg-white/10 px-3 py-2 text-left text-sm font-bold">{advancedOpen?'Masquer les outils':'Autres outils'}</button>
               {navItems.map((item) => {
                 const Icon = item.icon;
                 return (

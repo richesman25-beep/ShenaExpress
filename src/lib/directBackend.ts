@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   getDocsFromServer,
   query,
@@ -12,8 +13,14 @@ import {
   where,
   writeBatch,
   type Transaction,
+  type Firestore,
 } from "firebase/firestore";
 import {
+  buildEmptyOrderPackage,
+  addOrderPackageSchema,
+  packageTrackingSchema,
+  externalTracking,
+  orderPackageStatus,
   buildOrderCreation,
   createClientSchema,
   updateClientSchema,
@@ -35,8 +42,7 @@ import {
   completePasswordSetupSchema,
   formatClientId,
   formatOrderId,
-  formatShipmentId,
-  defaultTrackingNumber,
+  formatPackageId,
   buildSearchTokens,
   computeOrderStats,
   validateAllocation,
@@ -203,20 +209,51 @@ function writeTrackingGuard(tx: Transaction, guard: Awaited<ReturnType<typeof re
 }
 async function assertTrackingAvailable(trackingNumber: string, shipmentId?: string) {
   const matches = await getDocsFromServer(query(collection(getFirebaseDb(), "shipments"), where("trackingNumber", "==", trackingNumber)));
-  if (matches.docs.some(d => d.id !== shipmentId)) {
+  const externalMatches = await getDocsFromServer(query(collection(getFirebaseDb(), "shipments"), where("externalTrackingNumber", "==", trackingNumber)));
+  if ([...matches.docs, ...externalMatches.docs].some(d => d.id !== shipmentId)) {
     throw new Error("Ce numéro de suivi est déjà utilisé par un autre colis.");
   }
 }
+class PackageAllocationConflict extends Error {
+  readonly code='package-allocation-conflict';
+}
 async function readCreationCounter(tx: Transaction, kind: "orders" | "shipments", year: number) {
-  const refs = [doc(getFirebaseDb(), "counters", `${kind}_${year}`), doc(getFirebaseDb(), "counters", `${kind}-${year}`)];
+  const refs = kind === "shipments" ? [doc(getFirebaseDb(), "counters", "packages")] : [doc(getFirebaseDb(), "counters", `${kind}_${year}`), doc(getFirebaseDb(), "counters", `${kind}-${year}`)];
   const values = await Promise.all(refs.map(async ref => (await tx.get(ref)).data()?.value ?? 0));
   if (values.some(value => !Number.isSafeInteger(value) || value < 0 || value >= Number.MAX_SAFE_INTEGER)) {
     throw new Error("Le compteur d'identifiants est invalide. Contactez l'administrateur.");
   }
-  return { refs, next: Math.max(...values) + 1 };
+  const next = Math.max(...values) + 1;
+  const reservation = kind === "shipments" ? doc(getFirebaseDb(), "packageNumbers", formatPackageId(next)) : null;
+  if (reservation && (await tx.get(reservation)).exists()) throw new PackageAllocationConflict("Ce numéro de colis a déjà été attribué. Faites vérifier le compteur global ; aucun numéro ne sera réutilisé.");
+  return { refs, next, reservation };
 }
 function writeCreationCounter(tx: Transaction, counter: Awaited<ReturnType<typeof readCreationCounter>>) {
   for (const ref of counter.refs) tx.set(ref, { value: counter.next, updatedAt: serverTimestamp() }, { merge: true });
+  if (counter.reservation) tx.set(counter.reservation, {sequence: counter.next, packageId: formatPackageId(counter.next), createdAt: serverTimestamp()});
+}
+
+/** Le contrôle de progression peut refuser un commit devenu périmé avant
+ * la vérification des préconditions. Ne rejouer que si le compteur a changé. */
+async function runPackageTransaction<T>(db:Firestore, update:(tx:Transaction)=>Promise<T>):Promise<T> {
+  for(let attempt=0;attempt<6;attempt++) {
+    let observed=-1;
+    try {
+      return await runTransaction(db,async tx=>{
+        const counter=await tx.get(doc(db,'counters','packages'));
+        observed=Number(counter.data()?.value??0);
+        return update(tx);
+      },{maxAttempts:10});
+    } catch(error) {
+      const code=String((error as {code?:string}).code??'');
+      if((!code.includes('permission-denied') && code!=='package-allocation-conflict') || attempt===5)throw error;
+      let latest;
+      try {latest=await getDocFromServer(doc(db,'counters','packages'));}catch{throw error;}
+      if(Number(latest.data()?.value??0)===observed)throw error;
+      await new Promise(resolve=>setTimeout(resolve,50*(attempt+1)));
+    }
+  }
+  throw new Error('Créations simultanées : veuillez réessayer.');
 }
 
 export const directBackend = {
@@ -635,7 +672,7 @@ export const directBackend = {
     const actor = requireSignedInStaff();
     const input = parseInput(createOrderSchema, raw);
     const db = getFirebaseDb();
-    return withFirestoreCheck(() => runTransaction(db, async (tx) => {
+    return withFirestoreCheck(() => runPackageTransaction(db, async (tx) => {
       // Phase de lecture : aucun set/update/delete avant la fin des contrôles.
       const guard = await readTrackingGuard(tx);
       const clientSnap = await tx.get(doc(db, "clients", input.clientId));
@@ -645,13 +682,13 @@ export const directBackend = {
       if (client.clientId !== input.clientId || !client.clientUid) throw new Error("L'association du client à son compte est invalide. Contactez l'administrateur.");
       const year = new Date().getUTCFullYear();
       const orderCounter = await readCreationCounter(tx, "orders", year);
-      const shipmentCounter = input.trackingNumber ? await readCreationCounter(tx, "shipments", year) : null;
+      const shipmentCounter = input.trackingNumber || input.createInitialPackage ? await readCreationCounter(tx, "shipments", year) : null;
       const orderId = formatOrderId(year, orderCounter.next);
-      const shipmentId = shipmentCounter ? formatShipmentId(year, shipmentCounter.next) : null;
+      const shipmentId = shipmentCounter ? formatPackageId(shipmentCounter.next) : null;
       for (const path of [`orders/${orderId}`, `orderPrivate/${orderId}`, `orderFinance/${orderId}`,
         ...(shipmentId ? [`shipments/${shipmentId}`, `shipmentPrivate/${shipmentId}`] : [])]) {
         if ((await tx.get(doc(db, path))).exists()) {
-          throw new Error("Cet identifiant est déjà utilisé. Aucune donnée n'a été remplacée. Faites vérifier les compteurs par l'administrateur.");
+          throw new PackageAllocationConflict("Cet identifiant est déjà utilisé. Aucune donnée n'a été remplacée. Faites vérifier les compteurs par l'administrateur.");
         }
       }
       if (input.trackingNumber) await assertTrackingAvailable(input.trackingNumber);
@@ -720,6 +757,47 @@ export const directBackend = {
     }));
   },
 
+  async addOrderPackage(raw: unknown): Promise<{shipmentId: string}> {
+    const actor=requireSignedInStaff();
+    const input=parseInput(addOrderPackageSchema,raw);
+    const db=getFirebaseDb();
+    return withFirestoreCheck(()=>runPackageTransaction(db, async tx=>{
+      const guard=await readTrackingGuard(tx);
+      const orderRef=doc(db,"orders",input.orderId), orderSnap=await tx.get(orderRef);
+      if(!orderSnap.exists())throw new Error("Commande introuvable.");
+      const order=orderSnap.data() as OrderDoc;
+      if(order.status==='cancelled')throw new Error("Impossible d’ajouter un colis à une commande annulée.");
+      const client=await tx.get(doc(db,"clients",order.clientId));
+      if(!client.exists()||client.data().clientUid!==order.clientUid||client.data().status!=='active')throw new Error("Association client/commande invalide ou compte désactivé.");
+      const counter=await readCreationCounter(tx,"shipments",0), id=formatPackageId(counter.next);
+      const target=doc(db,"shipments",id);
+      if((await tx.get(target)).exists())throw new PackageAllocationConflict("Cet identifiant est déjà utilisé. Aucun colis n’a été remplacé.");
+      if(input.externalTrackingNumber)await assertTrackingAvailable(input.externalTrackingNumber);
+      const shipment=buildEmptyOrderPackage(order,id,input.externalTrackingNumber,new Date().toISOString());
+      const now=serverTimestamp();
+      writeCreationCounter(tx,counter);
+      tx.set(target,{...shipment,searchTokens:[id.toLowerCase(),...(input.externalTrackingNumber?[input.externalTrackingNumber.toLowerCase()]:[])],createdAt:now,updatedAt:now});
+      tx.update(orderRef,{status:orderPackageStatus([shipment],order.status),shipmentIds:[...(order.shipmentIds??[]),id],stats:{...order.stats,shipmentCount:(order.stats?.shipmentCount??order.shipmentIds?.length??0)+1},searchTokens:[...new Set([...order.searchTokens,id.toLowerCase(),...(input.externalTrackingNumber?[input.externalTrackingNumber.toLowerCase()]:[])])],updatedAt:now});
+      tx.set(doc(collection(db,"shipmentEvents")),{kind:'created',targetType:'shipment',orderId:order.orderId,shipmentId:id,clientUid:order.clientUid,toStatus:'registered',fromStatus:null,publicNote:`Colis ${id} ajouté à votre commande.`,actorUid:actor.uid,actorRole:'admin',at:now});
+      tx.set(doc(collection(db,"auditLogs")),{action:'shipment.add',actorUid:actor.uid,actorRole:'admin',targetType:'shipment',targetId:id,summary:`Colis ${id} ajouté à ${order.orderId}`,at:now});
+      writeTrackingGuard(tx,guard);
+      return {shipmentId:id};
+    }));
+  },
+
+  async updatePackageTracking(raw: unknown): Promise<{ok:boolean}> {
+    const actor=requireSignedInStaff();const input=parseInput(packageTrackingSchema,raw);const db=getFirebaseDb();
+    return withFirestoreCheck(()=>runTransaction(db,async tx=>{
+      const guard=await readTrackingGuard(tx);const ref=doc(db,"shipments",input.shipmentId);const snap=await tx.get(ref);
+      if(!snap.exists())throw new Error("Colis introuvable.");
+      if(input.externalTrackingNumber)await assertTrackingAvailable(input.externalTrackingNumber,input.shipmentId);
+      const now=serverTimestamp();
+      tx.update(ref,{externalTrackingNumber:input.externalTrackingNumber,searchTokens:buildSearchTokens(input.shipmentId,input.externalTrackingNumber),updatedAt:now});
+      tx.set(doc(collection(db,"auditLogs")),{action:'shipment.external_tracking',actorUid:actor.uid,actorRole:'admin',targetType:'shipment',targetId:input.shipmentId,summary:'Tracking externe modifié ; numéro SHENA conservé.',at:now});
+      writeTrackingGuard(tx,guard);return {ok:true};
+    }));
+  },
+
   async updateOrder(raw: unknown): Promise<{ ok: boolean }> {
     const actor = requireSignedInStaff();
     const input = parseInput(updateOrderSchema, raw);
@@ -730,6 +808,9 @@ export const directBackend = {
       const snap = await tx.get(ref);
       if (!snap.exists()) throw new Error("Commande introuvable.");
       const existing = snap.data() as OrderDoc;
+      const linkedShipments: ShipmentDoc[]=[];
+      for(const id of existing.shipmentIds){const snap=await tx.get(doc(db,'shipments',id));if(snap.exists())linkedShipments.push(snap.data() as ShipmentDoc);}
+      const hasNewPackages=linkedShipments.some(s=>s.packageSequence!==undefined);
 
       if (input.trackingNumber && existing.shipmentIds.length > 0) {
         await assertTrackingAvailable(input.trackingNumber, existing.shipmentIds[0]);
@@ -761,8 +842,8 @@ export const directBackend = {
           declaredUnitValue: it.declaredUnitValue ?? null,
         };
       });
-      const stats = computeOrderStats(input.orderId, items, []);
-      const nextStatus = input.initialStatus ?? existing.status;
+      const stats = computeOrderStats(input.orderId, items, linkedShipments);
+      const nextStatus = hasNewPackages ? orderPackageStatus(linkedShipments,existing.status) : input.initialStatus ?? existing.status;
       tx.update(ref, {
         merchant: input.merchant,
         merchantOrderRef: input.merchantOrderRef,
@@ -784,7 +865,7 @@ export const directBackend = {
         ),
         updatedAt: serverTimestamp(),
       });
-      if (existing.shipmentIds[0]) {
+      if (existing.shipmentIds[0] && !hasNewPackages) {
         const shipId = existing.shipmentIds[0];
         tx.update(doc(db, "shipments", shipId), {
           ...(input.trackingNumber ? { trackingNumber: input.trackingNumber } : {}),
@@ -867,11 +948,12 @@ export const directBackend = {
     const dateErrs = validateDateOrder(input.dates);
     if (dateErrs.length) throw new Error(dateErrs[0]!);
     const db = getFirebaseDb();
-    return withFirestoreCheck(() => runTransaction(db, async (tx) => {
+    return withFirestoreCheck(() => runPackageTransaction(db, async (tx) => {
       const guard = await readTrackingGuard(tx);
       const clientSnap = await tx.get(doc(db, "clients", input.clientId));
       if (!clientSnap.exists()) throw new Error("Client introuvable.");
       const client = clientSnap.data() as ClientDoc;
+      if(client.status!=='active' || client.clientId!==input.clientId || !client.clientUid)throw new Error("Client invalide ou désactivé.");
 
       const ordersSnap = await getDocs(
         query(collection(db, "orders"), where("clientId", "==", input.clientId)),
@@ -906,34 +988,30 @@ export const directBackend = {
       const year = new Date().getUTCFullYear();
       const counter = await readCreationCounter(tx, "shipments", year);
       const seq = counter.next;
-      const shipmentId = formatShipmentId(year, seq);
+      const shipmentId = formatPackageId(seq);
       for (const path of [`shipments/${shipmentId}`, `shipmentPrivate/${shipmentId}`]) {
-        if ((await tx.get(doc(db, path))).exists()) throw new Error("Cet identifiant de colis est déjà utilisé. Aucune donnée n'a été remplacée.");
+        if ((await tx.get(doc(db, path))).exists()) throw new PackageAllocationConflict("Cet identifiant de colis est déjà utilisé. Aucune donnée n'a été remplacée.");
       }
-      const trackingNumber = input.trackingNumber || defaultTrackingNumber(year, seq);
-      await assertTrackingAvailable(trackingNumber);
-      const finalLines: ShipmentLine[] =
-        lines.length > 0
-          ? lines
-          : input.description || input.orderRef
-            ? [
-                {
-                  orderId: input.orderRef ?? shipmentId,
-                  lineId: "L1",
-                  description: input.description ?? `Colis ${trackingNumber}`,
-                  quantity: 1,
-                },
-              ]
-            : [];
-      const orderIds = [...new Set(lines.map((l) => l.orderId))];
-      const itemCount = finalLines.length > 0 ? finalLines.reduce((sum, l) => sum + l.quantity, 0) : 1;
+      const trackingNumber = shipmentId;
+      const externalTrackingNumber = input.trackingNumber;
+      if (externalTrackingNumber) await assertTrackingAvailable(externalTrackingNumber);
+      const finalLines: ShipmentLine[] = lines;
+      const orderIds = [...new Set([...(input.orderRef ? [input.orderRef] : []), ...lines.map((l) => l.orderId)])];
+      if (!orderIds.length) throw new Error("Choisissez la commande principale de ce colis.");
+      for (const id of orderIds) if (!ordersMap.has(id) || ordersMap.get(id)!.clientUid !== client.clientUid || ordersMap.get(id)!.status === "cancelled") throw new Error("Commande principale invalide ou associée à un autre client.");
+      const itemCount = finalLines.reduce((sum, l) => sum + l.quantity, 0);
       const status: StatusCode =
-        input.initialStatus ?? (input.dates.warehouseReceivedAt || lines.length === 0 ? "received" : "preparing");
+        input.initialStatus ?? (input.dates.warehouseReceivedAt ? "received" : "registered");
 
       const nowIso = new Date().toISOString();
       const newShipment: ShipmentDoc = {
         shipmentId,
         trackingNumber,
+        externalTrackingNumber,
+        description: input.description,
+        primaryOrderId: orderIds[0],
+        packageSequence: seq,
+        rateConfirmedAt: null,
         clientId: client.clientId,
         clientUid: client.clientUid,
         orderIds,
@@ -946,7 +1024,7 @@ export const directBackend = {
         shippingCurrency: "USD",
         shippingPaymentStatus: null,
         paidAmountCents: 0,
-        miamiReceivedAt: status === "received" ? nowIso : null,
+        miamiReceivedAt: status === "received" ? input.dates.warehouseReceivedAt ?? nowIso : null,
         weighedAt: null,
         weighedByUid: null,
         weightHistory: [],
@@ -1024,13 +1102,12 @@ export const directBackend = {
       if (!snap.exists()) throw new Error("Colis introuvable.");
       const current = snap.data() as ShipmentDoc;
 
-      if (input.trackingNumber && input.trackingNumber !== current.trackingNumber) {
-        await assertTrackingAvailable(input.trackingNumber, input.shipmentId);
-      }
+      const nextExternal = input.trackingNumber === current.trackingNumber ? externalTracking(current) : input.trackingNumber ?? externalTracking(current);
+      if (nextExternal) await assertTrackingAvailable(nextExternal, input.shipmentId);
 
       const changes = diffDates(current.dates, input.dates);
       const nextStatus = input.initialStatus ?? current.status;
-      const nextLines =
+      const nextLines = current.packageSequence ? current.lines :
         input.description !== undefined && input.description !== null
           ? [
               {
@@ -1045,7 +1122,9 @@ export const directBackend = {
       if (snap.data()?.accountingManaged && JSON.stringify(nextLines) !== JSON.stringify(current.lines)) throw new Error("Colis facturé : les articles associés sont figés dans la comptabilité.");
       const now = serverTimestamp();
       tx.update(ref, {
-        trackingNumber: input.trackingNumber || current.trackingNumber,
+        trackingNumber: current.packageSequence ? current.trackingNumber : input.trackingNumber || current.trackingNumber,
+        externalTrackingNumber: nextExternal,
+        description: input.description,
         transportMode: input.transportMode,
         weightKg: input.weightKg,
         dimensionsCm: input.dimensionsCm,
@@ -1088,10 +1167,11 @@ export const directBackend = {
     const actor = requireSignedInStaff();
     const input = parseInput(updateStatusSchema, raw);
     const db = getFirebaseDb();
-    return withFirestoreCheck(async () => {
+    return withFirestoreCheck(() => runTransaction(db, async (tx) => {
+      const guard = await readTrackingGuard(tx);
       const col = input.targetType === "order" ? "orders" : "shipments";
       const ref = doc(db, col, input.targetId);
-      const snap = await getDoc(ref);
+      const snap = await tx.get(ref);
       if (!snap.exists()) throw new Error("Élément introuvable.");
       const data = snap.data() as {
         status: StatusCode;
@@ -1111,7 +1191,20 @@ export const directBackend = {
       };
       const step = progressStep(input.status, data.lastStep ?? 1) ?? data.lastStep ?? 1;
 
-      const batch = writeBatch(db);
+      const relatedOrders = new Map<string, OrderDoc>();
+      const relatedShipments = new Map<string, ShipmentDoc>();
+      if(input.targetType==='shipment') {
+        relatedShipments.set(input.targetId, snap.data() as ShipmentDoc);
+        for(const oid of data.orderIds ?? []) {
+          const order=await tx.get(doc(db,'orders',oid));
+          if(!order.exists())continue;
+          relatedOrders.set(oid,order.data() as OrderDoc);
+          for(const sid of order.data().shipmentIds ?? []){if(!relatedShipments.has(sid)){const s=await tx.get(doc(db,'shipments',sid));if(s.exists())relatedShipments.set(sid,s.data() as ShipmentDoc);}}
+        }
+      } else {
+        for(const sid of data.shipmentIds ?? []) {const s=await tx.get(doc(db,'shipments',sid));if(s.exists())relatedShipments.set(sid,s.data() as ShipmentDoc);}
+      }
+      const batch = tx;
       const now = serverTimestamp();
       const nowIso = new Date().toISOString();
       const stageDates: Record<string, string> = {};
@@ -1130,29 +1223,15 @@ export const directBackend = {
         updatedAt: now,
       });
 
-      // Synchronise le statut entre la commande et son colis associé lorsque liés
-      if (input.targetType === "shipment" && data.orderIds?.length) {
-        for (const oid of data.orderIds) {
-          const ordSnap = await getDoc(doc(db, "orders", oid));
-          if (ordSnap.exists()) {
-            batch.update(doc(db, "orders", oid), {
-              status: input.status,
-              updatedAt: now,
-            });
-          }
+      if (input.targetType==='shipment') {
+        const current=relatedShipments.get(input.targetId)!;
+        relatedShipments.set(input.targetId,{...current,status:input.status,lastStep:step});
+        for(const [oid] of relatedOrders) {
+          const siblings=[...relatedShipments.values()].filter(s=>s.orderIds.includes(oid));
+          batch.update(doc(db,'orders',oid),{status:orderPackageStatus(siblings,input.status),updatedAt:now});
         }
-      } else if (input.targetType === "order" && data.shipmentIds?.length) {
-        for (const sid of data.shipmentIds) {
-          const shipSnap = await getDoc(doc(db, "shipments", sid));
-          if (shipSnap.exists()) {
-            batch.update(doc(db, "shipments", sid), {
-              status: input.status,
-              lastStep: step,
-              ...stageDates,
-              updatedAt: now,
-            });
-          }
-        }
+      } else {
+        for(const [sid] of relatedShipments) batch.update(doc(db,'shipments',sid),{status:input.status,lastStep:step,...stageDates,updatedAt:now});
       }
 
       batch.set(doc(collection(db, "shipmentEvents")), {
@@ -1187,9 +1266,9 @@ export const directBackend = {
         channels: ["in_app"],
       });
 
-      await batch.commit();
+      writeTrackingGuard(tx,guard);
       return { ok: true };
-    });
+    }));
   },
 
   async recordShipmentWeighing(raw: unknown): Promise<{
@@ -1226,13 +1305,13 @@ export const directBackend = {
         }
       }
       const nowIso = new Date().toISOString();
-      let miamiReceivedAt = current.miamiReceivedAt ?? null;
+      let miamiReceivedAt = input.miamiReceivedAt ?? current.miamiReceivedAt ?? null;
       let nextStatus = current.status;
       if (!hasConfirmedMiamiReception(current)) {
         if (!input.confirmMiamiReceipt) {
           throw new Error("La réception physique à Miami doit être confirmée avant la pesée.");
         }
-        miamiReceivedAt = nowIso;
+        miamiReceivedAt = input.miamiReceivedAt ?? nowIso;
         nextStatus = "received";
       } else if (!miamiReceivedAt) {
         miamiReceivedAt = nowIso;
@@ -1274,8 +1353,10 @@ export const directBackend = {
         status: nextStatus,
         lastStep: nextStatus === "received" ? Math.max(current.lastStep ?? 1, 1) : current.lastStep,
         miamiReceivedAt,
+        dates: {...current.dates,warehouseReceivedAt:input.miamiReceivedAt??current.dates?.warehouseReceivedAt??miamiReceivedAt?.slice(0,10)??null},
         actualWeightLb: input.weightLb,
         ratePerLbCents,
+        rateConfirmedAt: input.confirmRate ? nowIso : null,
         shippingFeeCents,
         shippingCurrency: "USD",
         shippingPaymentStatus: nextPayStatus,
@@ -1292,7 +1373,7 @@ export const directBackend = {
           current.lines.filter(line => line.orderId === order.orderId && line.lineId === item.lineId).reduce((sum, line) => sum + line.quantity, 0)) }));
         batch.update(doc(db, "orders", order.orderId), {
           items, stats: computeOrderStats(order.orderId, items, [...relatedShipments.values()]),
-          ...(order.shipmentIds.length === 1 && order.status !== "cancelled" ? { status: nextStatus } : {}), updatedAt: now,
+          ...(order.status !== "cancelled" ? { status: orderPackageStatus([...relatedShipments.values()].filter(s=>s.orderIds.includes(order.orderId)),order.shipmentIds.length===1?nextStatus:order.status) } : {}), updatedAt: now,
         });
       }
 

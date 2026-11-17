@@ -24,7 +24,7 @@ export function hasConfirmedMiamiReception(
 }
 
 export function canViewWeightAndFee(
-  shipment: Pick<ShipmentDoc, "status" | "miamiReceivedAt" | "actualWeightLb" | "shippingFeeCents" | "weighedAt">,
+  shipment: Pick<ShipmentDoc, "status" | "miamiReceivedAt" | "actualWeightLb" | "shippingFeeCents" | "weighedAt"> & Partial<Pick<ShipmentDoc, "rateConfirmedAt" | "ratePerLbCents">>,
 ): boolean {
   if (!hasConfirmedMiamiReception(shipment)) return false;
   return (
@@ -32,14 +32,16 @@ export function canViewWeightAndFee(
     shipment.actualWeightLb > 0 &&
     typeof shipment.shippingFeeCents === "number" &&
     shipment.shippingFeeCents > 0 &&
-    Boolean(shipment.weighedAt)
+    Boolean(shipment.weighedAt) &&
+    (shipment.rateConfirmedAt === undefined || Boolean(shipment.rateConfirmedAt)) &&
+    (shipment.ratePerLbCents === undefined || typeof shipment.ratePerLbCents === "number" && shipment.ratePerLbCents > 0)
   );
 }
 
 export type FeeVisibilityState = "hidden" | "awaiting_weighing" | "ready";
 
 export function getShipmentFeeVisibility(
-  shipment: Pick<ShipmentDoc, "status" | "miamiReceivedAt" | "actualWeightLb" | "shippingFeeCents" | "weighedAt">,
+  shipment: Pick<ShipmentDoc, "status" | "miamiReceivedAt" | "actualWeightLb" | "shippingFeeCents" | "weighedAt"> & Partial<Pick<ShipmentDoc, "rateConfirmedAt" | "ratePerLbCents">>,
 ): FeeVisibilityState {
   if (!hasConfirmedMiamiReception(shipment)) return "hidden";
   if (canViewWeightAndFee(shipment)) return "ready";

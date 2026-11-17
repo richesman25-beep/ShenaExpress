@@ -7,7 +7,7 @@ import {
   type StatusCode,
 } from "./statuses.js";
 
-type ShipmentLike = Pick<ShipmentDoc, "shipmentId" | "status" | "lines">;
+type ShipmentLike = Pick<ShipmentDoc, "shipmentId" | "status" | "lines"> & Partial<Pick<ShipmentDoc, "orderIds">>;
 
 const lineKey = (orderId: string, lineId: string) => `${orderId}::${lineId}`;
 
@@ -29,7 +29,7 @@ export function computeOrderStats(orderId: string, items: OrderItem[], shipments
   for (const sh of shipments) {
     if (sh.status === "cancelled") continue;
     const own = sh.lines.filter((l) => l.orderId === orderId && validLines.has(l.lineId));
-    if (own.length === 0) continue;
+    if (own.length === 0 && !sh.orderIds?.includes(orderId)) continue;
     shipmentCount += 1;
     const qty = own.reduce((s, l) => s + l.quantity, 0);
     packed += qty;

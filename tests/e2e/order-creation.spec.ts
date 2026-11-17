@@ -16,7 +16,7 @@ test("crée une commande, calcule le prix à Miami et suit les six étapes chez 
   await page.locator("#of-desc").fill("Colis test affichage client");
   await page.getByRole("button", { name: "Enregistrer la commande", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByText(tracking, { exact: true })).toBeVisible();
+  await expect(page.getByText(`Tracking externe : ${tracking}`, { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Nouvelle commande / colis" }).click();
   await page.locator("#of-client").selectOption("SHE-CLIENT-001");
@@ -35,15 +35,16 @@ test("crée une commande, calcule le prix à Miami et suit les six étapes chez 
     await client.getByRole("button", { name: "Se connecter", exact: true }).click();
     await expect(client).toHaveURL(/\/espace-client$/);
     await client.goto(new URL("/espace-client/colis", client.url()).href);
-    await expect(client.getByRole("link", { name: `Numéro de suivi : ${tracking}`, exact: true })).toBeVisible();
-    await client.getByRole("link", { name: `Numéro de suivi : ${tracking}`, exact: true }).click();
-    await expect(client.getByRole("heading", { name: tracking, exact: true })).toBeVisible();
+    await expect(client.getByRole("link", { name: new RegExp(`Tracking externe : ${tracking}`) })).toBeVisible();
+    await client.getByRole("link", { name: new RegExp(`Tracking externe : ${tracking}`) }).click();
+    await expect(client.getByRole("heading", { name: /^SHE-PKG-\d{6,}$/ })).toBeVisible();
     await expect(client.getByText("Colis test affichage client", { exact: true })).toBeVisible();
     await expect(client.getByRole("region", { name: "Progression : Commande placée", exact: true })).toBeVisible();
     await expect(client.getByText("Poids réel", { exact: true })).toHaveCount(0);
     await page.getByRole("row").filter({ hasText: tracking }).getByRole("button", { name: "Suivi & statut" }).click();
     await page.locator("#quick-weight").fill("4,75");
     await expect(page.getByText(/4,75 lb ×.*28,50/)).toBeVisible();
+    await page.getByRole('checkbox',{name:/Je confirme le tarif/}).check();
     await page.getByRole("button", { name: "Enregistrer le poids et le prix", exact: true }).click();
     await expect(client.getByText("4,75 lb", { exact: true })).toBeVisible();
     await expect(client.getByText(/28,50/).first()).toBeVisible();

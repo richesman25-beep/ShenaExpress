@@ -30,6 +30,8 @@ import {
   statusLocation,
   buildWhatsappMessage,
   buildWhatsappUrl,
+  externalTracking,
+  orderShippingTotal,
   getShipmentFeeVisibility,
   formatWeightLb,
   formatMoney,
@@ -377,12 +379,12 @@ export function WeightAndFeeCard({
     | "shippingCurrency"
     | "shippingPaymentStatus"
     | "weighedAt"
-  > & { dates?: ShipmentDoc["dates"] };
+  > & { dates?: ShipmentDoc["dates"]; rateConfirmedAt?:string|null };
 }) {
   const visibility = getShipmentFeeVisibility(shipment);
 
   if (visibility === "hidden") {
-    return null;
+    return <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm"><strong>Prix en attente</strong><p className="text-xs text-slate-600">Le prix sera confirmé après la réception à Miami, la pesée et la confirmation du tarif.</p></div>;
   }
 
   if (visibility === "awaiting_weighing") {
@@ -392,10 +394,9 @@ export function WeightAndFeeCard({
         <div className="flex items-start gap-3">
           <Scale className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
           <div className="space-y-1">
-            <div className="font-bold">Arrivé à l&apos;entrepôt de Miami — En attente de pesée</div>
+            <div className="font-bold">Prix en attente — Arrivé à l&apos;entrepôt de Miami</div>
             <p className="text-xs text-amber-900">
-              Votre colis est bien arrivé à notre entrepôt de Miami{receivedDate ? ` le ${receivedDate}` : ""}. Le poids
-              réel et les frais de livraison (6,00 USD / lb) seront affichés dès la pesée officielle.
+              Votre colis est bien arrivé à notre entrepôt de Miami{receivedDate ? ` le ${receivedDate}` : ""}. {shipment.actualWeightLb ? `Poids réel : ${formatWeightLb(shipment.actualWeightLb)}. ` : "En attente de pesée. "}Les frais seront affichés après la pesée et la confirmation du tarif.
             </p>
           </div>
         </div>
@@ -712,11 +713,11 @@ export function Modal({
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/60 p-4 backdrop-blur-[1px] overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/60 p-3 sm:p-4 backdrop-blur-[1px] overflow-hidden"
     >
-      <div className={`w-full ${maxWidth} rounded-2xl bg-white shadow-xl border border-slate-200 my-8`}>
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <h2 className="text-base font-bold text-navy-900">{title}</h2>
+      <div className={`w-full min-w-0 ${maxWidth} max-h-[calc(100dvh-2rem)] flex flex-col rounded-2xl bg-white shadow-xl border border-slate-200`}>
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
+          <h2 className="min-w-0 break-words text-base font-bold text-navy-900">{title}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -726,7 +727,7 @@ export function Modal({
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
-        <div className="p-5 max-h-[80vh] overflow-y-auto">{children}</div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-5">{children}</div>
       </div>
     </div>
   );
@@ -872,4 +873,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export function useToast() {
   return useContext(ToastContext);
+}
+
+/** L’identifiant SHENA reste immuable ; le numéro marchand est affiché séparément. */
+export function ShipmentIdentity({shipment}:{shipment:Pick<ShipmentDoc,'shipmentId'|'trackingNumber'|'externalTrackingNumber'>}) {
+ const tracking=externalTracking(shipment);
+ return <div className="space-y-1 break-words"><div className="font-bold">Numéro SHENA : {shipment.shipmentId}</div><div className="text-xs text-slate-600">Tracking externe : {tracking ?? 'Non renseigné'}</div></div>;
+}
+export function OrderShippingTotal({shipments}:{shipments:ShipmentDoc[]}) {
+ const total=orderShippingTotal(shipments);
+ return <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1" role="region" aria-label="Total shipping de la commande"><strong>{total.provisional ? 'Total provisoire des frais confirmés' : 'Total des frais confirmés'} : {formatMoney(total.amountCents,'USD')}</strong><p className="text-xs text-slate-600">{total.confirmedCount} colis avec prix confirmé · {total.pendingCount} prix en attente. Les colis annulés sont exclus. Ce total ne représente pas un paiement reçu.</p></div>;
 }

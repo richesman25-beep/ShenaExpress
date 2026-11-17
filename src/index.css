@@ -233,3 +233,7 @@
 .accounting-page table { min-width: 900px; line-height: 1.6; }
 .accounting-page td { padding: 10px 8px; vertical-align: top; }
 .accounting-page progress { accent-color: #ff8500; }
+
+/* Le sélecteur des colis ne doit pas imposer une largeur intrinsèque à la fenêtre mobile. */
+.order-packages input:not([type='checkbox']), .order-packages select, .order-packages textarea { min-width: 0; max-width: 100%; font-size: 16px; }
+.order-packages input[type='checkbox'] { width: 18px; height: 18px; flex-shrink: 0; }

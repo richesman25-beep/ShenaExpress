@@ -2,6 +2,7 @@ import { HttpsError, type CallableRequest } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue, Timestamp, type Transaction, type WriteBatch } from "firebase-admin/firestore";
 import type { ZodType } from "zod";
 import {
+  formatPackageId,
   hasPermission,
   zodMessages,
   type AuthClaims,
@@ -108,16 +109,20 @@ export function writeTrackingGuard(tx: Transaction, guard: Awaited<ReturnType<ty
 
 /** Lit les deux noms historiques de compteurs, sans écrire dans la transaction. */
 export async function readCreationCounter(tx: Transaction, kind: "orders" | "shipments", year: number) {
-  const refs = [db().doc(`counters/${kind}_${year}`), db().doc(`counters/${kind}-${year}`)];
+  const refs = kind === "shipments" ? [db().doc("counters/packages")] : [db().doc(`counters/${kind}_${year}`), db().doc(`counters/${kind}-${year}`)];
   const snaps = await tx.getAll(...refs);
   const values = snaps.map(snap => snap.data()?.value ?? 0);
   if (values.some(value => !Number.isSafeInteger(value) || value < 0 || value >= Number.MAX_SAFE_INTEGER)) {
     fail("failed-precondition", "Le compteur d'identifiants est invalide. Contactez l'administrateur.");
   }
-  return { refs, next: Math.max(...values) + 1 };
+  const next = Math.max(...values) + 1;
+  const reservation = kind === "shipments" ? db().doc(`packageNumbers/${formatPackageId(next)}`) : null;
+  if (reservation && (await tx.get(reservation)).exists) fail("already-exists", "Ce numéro de colis a déjà été attribué. Faites vérifier le compteur global ; aucun numéro ne sera réutilisé.");
+  return { refs, next, reservation };
 }
 export function writeCreationCounter(tx: Transaction, counter: Awaited<ReturnType<typeof readCreationCounter>>) {
   for (const ref of counter.refs) tx.set(ref, { value: counter.next, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  if (counter.reservation) tx.create(counter.reservation, {sequence: counter.next, packageId: formatPackageId(counter.next), createdAt: FieldValue.serverTimestamp()});
 }
 
 export const DEFAULT_PUBLIC_SETTINGS: PublicSettingsDoc = {

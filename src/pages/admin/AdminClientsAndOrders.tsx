@@ -1,3 +1,4 @@
+import { ShipmentIdentity, OrderShippingTotal } from "@/components/ui";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import {
@@ -19,6 +20,8 @@ import { useSettings } from "@/contexts/SettingsContext";
 import { getFirebaseDb } from "@/lib/firebase";
 import { api, formatError } from "@/lib/api";
 import {
+  externalTracking,
+  orderPackageStatus,
   STATUS_CODES,
   SHENA_PRIMARY_STATUSES,
   CLIENT_ACCESS_LABELS,
@@ -952,20 +955,21 @@ export function AdminOrdersPage() {
     const q = search.trim().toLowerCase();
     return orders.filter((o) => {
       const linkedShip = shipmentByOrderId.get(o.orderId);
-      const effectiveStatus = linkedShip?.status ?? o.status;
-      if (statusFilter !== "all" && effectiveStatus !== statusFilter) return false;
+      const relatedPackages = shipments.filter(s=>s.orderIds.includes(o.orderId));
+      const effectiveStatus = orderPackageStatus(relatedPackages,linkedShip?.status ?? o.status);
+      if (statusFilter !== "all" && effectiveStatus !== statusFilter && !relatedPackages.some(s=>s.status===statusFilter)) return false;
       if (!q) return true;
       return (
         o.orderId.toLowerCase().includes(q) ||
         o.clientId.toLowerCase().includes(q) ||
         o.clientName.toLowerCase().includes(q) ||
-        (linkedShip?.trackingNumber ?? "").toLowerCase().includes(q) ||
+        shipments.some(s=>s.orderIds.includes(o.orderId) && `${s.shipmentId} ${externalTracking(s)??''}`.toLowerCase().includes(q)) ||
         (o.merchantOrderRef ?? "").toLowerCase().includes(q) ||
         o.items.some((i) => i.description.toLowerCase().includes(q)) ||
         o.searchTokens?.some((t) => t.includes(q))
       );
     });
-  }, [orders, shipmentByOrderId, search, statusFilter]);
+  }, [orders, shipments, shipmentByOrderId, search, statusFilter]);
 
   return (
     <div className="space-y-5">
@@ -1035,22 +1039,23 @@ export function AdminOrdersPage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                  <th className="py-3 px-4">Numéro de suivi</th>
+                  <th className="py-3 px-4">Colis SHENA et tracking externe</th>
                   <th className="py-3 px-4">Client associé</th>
                   <th className="py-3 px-4">Réf. &amp; Description</th>
-                  <th className="py-3 px-4">Statut logistique actuel</th>
+                  <th className="py-3 px-4">Statut général</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filtered.map((o) => {
                   const linkedShip = shipmentByOrderId.get(o.orderId);
-                  const effectiveStatus = linkedShip?.status ?? o.status;
+                  const relatedPackages = shipments.filter(s=>s.orderIds.includes(o.orderId));
+      const effectiveStatus = orderPackageStatus(relatedPackages,linkedShip?.status ?? o.status);
                   return (
                     <tr key={o.orderId} className="hover:bg-slate-50/80">
                       <td className="py-3 px-4">
                         <div className="font-extrabold text-navy-900">
-                          {linkedShip?.trackingNumber ?? o.orderId}
+                          {shipments.filter(s=>s.orderIds.includes(o.orderId)).map(s=><div key={s.shipmentId} className="mb-2"><ShipmentIdentity shipment={s}/></div>)}
                         </div>
                         <div className="text-xs text-slate-500">{o.orderId}</div>
                       </td>
@@ -1151,7 +1156,7 @@ function OrderFormModal({
   const [clientId, setClientId] = useState(
     initial?.clientId ?? clients.find((c) => c.status === "active")?.clientId ?? "",
   );
-  const [trackingNumber, setTrackingNumber] = useState(linkedShipment?.trackingNumber ?? "");
+  const [trackingNumber, setTrackingNumber] = useState(linkedShipment ? externalTracking(linkedShipment) ?? "" : "");
   const [merchantOrderRef, setMerchantOrderRef] = useState(initial?.merchantOrderRef ?? "");
   const [description, setDescription] = useState(initial?.items[0]?.description ?? "");
   const [initialStatus, setInitialStatus] = useState<StatusCode>(
@@ -1174,10 +1179,6 @@ function OrderFormModal({
     e.preventDefault();
     setError(null);
     const cleanTracking = trackingNumber.trim().toUpperCase();
-    if (!initial && !cleanTracking) {
-      setError("Le numéro de suivi unique est obligatoire.");
-      return;
-    }
     setBusy(true);
     try {
       const descText = description.trim() || `Colis ${cleanTracking || initial?.orderId || "SHENA"}`;
@@ -1193,7 +1194,7 @@ function OrderFormModal({
       if (initial) {
         await api.updateOrder({
           orderId: initial.orderId,
-          trackingNumber: cleanTracking || null,
+          trackingNumber: linkedShipment?.packageSequence ? null : cleanTracking || null,
           initialStatus,
           description: descText,
           merchant: initial.merchant ?? null,
@@ -1203,13 +1204,14 @@ function OrderFormModal({
           transportMode: initial.transportMode ?? "air",
           publicNote: initial.publicNote ?? null,
           internalNotes: internalNotes.trim() || null,
-          items: parsedItems,
+          items: initial.items.length > 1 ? [parsedItems[0], ...initial.items.slice(1)] : parsedItems,
         });
         onSaved();
       } else {
         const res = await api.createOrder({
           clientId,
-          trackingNumber: cleanTracking,
+          trackingNumber: cleanTracking || null,
+          createInitialPackage: true,
           initialStatus: "registered",
           description: descText,
           merchant: null,
@@ -1269,12 +1271,12 @@ function OrderFormModal({
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="of-tracking" className="block text-xs font-bold text-slate-700 mb-1">
-              Numéro de suivi unique *
+              Tracking externe (facultatif)
             </label>
             <input
               id="of-tracking"
-              required={!initial}
-              placeholder="Ex. SHX260001 ou 1Z999AA101"
+              disabled={Boolean(initial && linkedShipment?.packageSequence)}
+              placeholder="SHEIN, Amazon, Temu, transporteur…"
               value={trackingNumber}
               onChange={(e) => setTrackingNumber(e.target.value)}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase font-mono"
@@ -1309,7 +1311,7 @@ function OrderFormModal({
           />
         </div>
 
-        {initial && (
+        {initial && !linkedShipment?.packageSequence && (
         <div>
           <label htmlFor="of-status" className="block text-xs font-bold text-slate-700 mb-1">
             Statut logistique initial *
@@ -1378,9 +1380,17 @@ function OrderInspectModal({
   onClose: () => void;
 }) {
   const { can } = useAuth();
-  const { labelForStatus } = useSettings();
+  const { settings,labelForStatus } = useSettings();
   const { notify } = useToast();
-  const primaryShipment = shipments[0];
+  const [selectedPackageId,setSelectedPackageId]=useState(shipments[0]?.shipmentId ?? '');
+  const primaryShipment = shipments.find(s=>s.shipmentId===selectedPackageId) ?? shipments[0];
+  const [newExternal,setNewExternal]=useState('');
+  const [external,setExternal]=useState('');
+  const [packageError,setPackageError]=useState('');
+  const [miamiDate,setMiamiDate]=useState(todayIso());
+  const [confirmRate,setConfirmRate]=useState(false);
+  useEffect(()=>{setWeight('');setWeightError(null);setConfirmRate(false);setPublicNote('');setInternalNote('');setConfirmNextStatus(null);setMiamiDate(primaryShipment?.miamiReceivedAt?.slice(0,10) ?? todayIso());},[primaryShipment?.shipmentId,primaryShipment?.miamiReceivedAt]);
+  useEffect(()=>{setExternal(primaryShipment ? externalTracking(primaryShipment) ?? '' : '');},[primaryShipment]);
   const currentStatus = primaryShipment?.status ?? order.status;
   const [status, setStatus] = useState<StatusCode>(currentStatus);
   const [publicNote, setPublicNote] = useState("");
@@ -1389,7 +1399,7 @@ function OrderInspectModal({
   const [weight, setWeight] = useState("");
   const [weightError, setWeightError] = useState<string | null>(null);
   const parsedWeight = parseValidWeightLb(weight);
-  const rate = primaryShipment?.ratePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
+  const rate = primaryShipment?.ratePerLbCents ?? settings.shippingRatePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
   const [busy, setBusy] = useState(false);
   const saveMiamiWeight = async (e: FormEvent) => {
     e.preventDefault();
@@ -1400,7 +1410,7 @@ function OrderInspectModal({
     setBusy(true); setWeightError(null);
     try {
       await api.recordShipmentWeighing({ shipmentId: primaryShipment.shipmentId, actualWeightLb: parsedWeight,
-        confirmMiamiReception: true, reason: primaryShipment.actualWeightLb != null ? "Correction du poids par l'administrateur" : null });
+        confirmMiamiReception: true, confirmRate, miamiReceivedAt:miamiDate, reason: primaryShipment.actualWeightLb != null ? "Correction du poids par l'administrateur" : null });
       notify("success", "Réception à Miami et prix enregistrés. Le client peut les consulter.");
       setWeight("");
     } catch (err) { setWeightError(formatError(err)); }
@@ -1446,7 +1456,15 @@ function OrderInspectModal({
 
   return (
     <Modal title={`Suivi commande ${order.orderId}`} onClose={onClose} maxWidth="max-w-2xl">
-      <div className="space-y-5">
+      <div className="order-packages min-w-0 space-y-5">
+        <OrderShippingTotal shipments={shipments}/>
+        <section className="space-y-3 rounded-xl border p-3"><h3 className="font-bold">Colis de la commande ({shipments.length})</h3>
+          {shipments.map(s=><button key={s.shipmentId} type="button" disabled={busy} onClick={()=>setSelectedPackageId(s.shipmentId)} aria-pressed={s.shipmentId===primaryShipment?.shipmentId} className="block w-full rounded-xl border p-3 text-left hover:bg-blue-50"><ShipmentIdentity shipment={s}/><StatusBadge status={s.status} size="sm"/></button>)}
+          {can('shipments.write') && order.status!=='cancelled' && <form onSubmit={async e=>{e.preventDefault();setBusy(true);setPackageError('');try{const result=await api.addOrderPackage({orderId:order.orderId,externalTrackingNumber:newExternal.trim()||null});setSelectedPackageId(result.shipmentId);setNewExternal('');notify('success','Colis ajouté avec son numéro SHENA automatique.');}catch(err){setPackageError(formatError(err));}finally{setBusy(false);}}} className="space-y-2"><label className="block text-xs">Tracking externe du nouveau colis (facultatif)<input value={newExternal} onChange={e=>setNewExternal(e.target.value)} className="block w-full rounded-xl border p-2"/></label><button disabled={busy} className="rounded-xl bg-orange-500 px-4 py-2 font-bold text-white">+ Ajouter un colis</button></form>}
+          {packageError && <p role="alert" className="text-sm text-red-700">{packageError}</p>}
+        </section>
+        {primaryShipment && <><label className="block text-xs font-bold">Colis à gérer<select disabled={busy} className="mt-1 block w-full min-w-0 rounded-xl border p-3" value={primaryShipment.shipmentId} onChange={e=>setSelectedPackageId(e.target.value)}>{shipments.map(s=><option key={s.shipmentId} value={s.shipmentId}>{s.shipmentId} — {externalTracking(s) ?? 'sans tracking externe'}</option>)}</select></label><ShipmentIdentity shipment={primaryShipment}/></>}
+        {primaryShipment && can('shipments.write') && <form onSubmit={async e=>{e.preventDefault();setBusy(true);setPackageError('');try{await api.updatePackageTracking({shipmentId:primaryShipment.shipmentId,externalTrackingNumber:external.trim()||null});notify('success','Tracking externe enregistré ; numéro SHENA conservé.');}catch(err){setPackageError(formatError(err));}finally{setBusy(false);}}} className="space-y-2"><label className="block text-xs">Tracking externe du colis sélectionné<input value={external} onChange={e=>setExternal(e.target.value)} className="block w-full rounded-xl border p-2"/></label><button disabled={busy} className="rounded-xl border px-3 py-2 text-xs font-bold">Enregistrer le tracking externe</button></form>}
         <div className="grid sm:grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-xs">
           <div>
             <span className="text-slate-500 block">Client associé :</span>
@@ -1475,9 +1493,11 @@ function OrderInspectModal({
         {primaryShipment && can("shipments.write") && (currentStatus === "registered" || currentStatus === "awaiting_receipt" || currentStatus === "preparing" || currentStatus === "received") && (
           <form onSubmit={saveMiamiWeight} className="rounded-xl border border-blue-200 bg-blue-50 p-4 space-y-3">
             <h3 className="font-extrabold text-navy-900">Réception à Miami : ajouter le poids</h3>
+            <label className="block text-xs font-bold">Date de réception à Miami<input type="date" required value={miamiDate} onChange={e=>setMiamiDate(e.target.value)} className="mt-1 block w-full rounded-xl border p-3"/></label>
             <label htmlFor="quick-weight" className="block text-xs font-bold">Poids réel en livres (lb)</label>
             <input id="quick-weight" inputMode="decimal" placeholder="Ex. 4,75" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm" />
             <p className="text-sm font-bold">{parsedWeight !== null ? `${weight} lb × ${formatMoney(rate, "USD")} = ${formatMoney(calculateShippingFeeCents(parsedWeight, rate), "USD")}` : `Tarif : ${formatMoney(rate, "USD")} par livre`}</p>
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" required checked={confirmRate} onChange={e=>setConfirmRate(e.target.checked)}/>Je confirme le tarif de {formatMoney(rate,'USD')} par livre pour ce colis.</label>
             {weightError && <p role="alert" className="text-sm text-red-700">{weightError}</p>}
             <button type="submit" disabled={busy} className="rounded-xl bg-royal-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? "Enregistrement…" : "Enregistrer le poids et le prix"}</button>
           </form>
@@ -1560,7 +1580,7 @@ function OrderInspectModal({
 
         <div className="space-y-2">
           <div className="text-xs font-bold text-navy-900 uppercase">Chronologie</div>
-          <TrackingTimeline events={events} />
+          <TrackingTimeline events={events.filter(e=>!e.shipmentId || e.shipmentId===primaryShipment?.shipmentId)} />
         </div>
 
         </details>

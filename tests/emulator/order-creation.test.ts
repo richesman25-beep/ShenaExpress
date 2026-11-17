@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeTestEnvironment, assertFails, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, onSnapshot, query, setDoc, where, type Firestore } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, deleteDoc, updateDoc, onSnapshot, query, setDoc, where, type Firestore } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
 import { connectAuthEmulator, getAuth, signInWithCustomToken } from "firebase/auth";
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from "firebase/functions";
 import { initializeApp as initializeAdminApp, getApps } from "firebase-admin/app";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
-import { formatOrderId, formatShipmentId } from "../../shared/index";
+import { formatOrderId, formatPackageId } from "../../shared/index";
 
 const state = vi.hoisted(() => ({ db: null as Firestore | null }));
 vi.mock("@/lib/firebase", () => ({
@@ -57,7 +57,7 @@ beforeEach(async () => {
   await setDoc(doc(state.db!, "settings/public"), { modules: { finance: true } });
   await setDoc(doc(state.db!, "settings/private"), { notifications: { inApp: true, email: false, events: {} } });
 });
-afterAll(async () => { await env?.cleanup(); await deleteApp(app); });
+afterAll(async () => { await env?.clearFirestore(); await env?.cleanup(); await deleteApp(app); });
 
 function payload(trackingNumber: string | null = "TEST-SHENA-001") {
   return {
@@ -80,7 +80,7 @@ for (const mode of ["direct", "callable"] as const) {
       const shipmentId = order.shipmentIds[0];
       const shipment = (await getDoc(doc(state.db!, "shipments", shipmentId))).data()!;
       expect(order).toMatchObject({ clientId: CLIENT_ID, clientUid: CLIENT_UID, status: "registered", stats: { ordered: 2, received: 0 } });
-      expect(shipment).toMatchObject({ trackingNumber: "TEST-SHENA-001", clientId: CLIENT_ID, clientUid: CLIENT_UID, orderIds: [orderId] });
+      expect(shipment).toMatchObject({ trackingNumber: shipmentId, externalTrackingNumber: "TEST-SHENA-001", clientId: CLIENT_ID, clientUid: CLIENT_UID, orderIds: [orderId] });
       expect(shipment.lines[0]).toMatchObject({ orderId, quantity: 2 });
       expect(order.searchTokens).toContain("test-shena-001");
       expect((await getDoc(doc(state.db!, "orderFinance", orderId))).data()).toMatchObject({ clientId: CLIENT_ID, clientUid: CLIENT_UID, totalDue: 0 });
@@ -162,8 +162,8 @@ for (const mode of ["direct", "callable"] as const) {
     });
 
     it("ne remplace pas un colis existant et ne laisse aucune commande partielle", async () => {
-      const id = formatShipmentId(year, 1);
-      await setDoc(doc(state.db!, "shipments", id), { shipmentId: id, trackingNumber: "OLD-TRACKING", marker: "historique" });
+      const id = formatPackageId(1);
+      await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(), "shipments", id), { shipmentId: id, trackingNumber: "OLD-TRACKING", marker: "historique" }));
       const before = await counts();
       await expect(create(payload())).rejects.toThrow(/identifiant est déjà utilisé/);
       expect((await getDoc(doc(state.db!, "shipments", id))).data()?.marker).toBe("historique");
@@ -223,12 +223,13 @@ it("un suivi ancien sans index est détecté ; création et renommage de colis r
 
 for (const mode of ["direct", "callable"] as const) {
   it(`la création de colis ${mode} avec suivi généré termine toutes les lectures avant les écritures`, async () => {
-    const data = { clientId: CLIENT_ID, transportMode: "air", lines: [], dates: {} };
+    const parent=await directBackend.createOrder(payload(null));
+    const data = { clientId: CLIENT_ID, orderRef:parent.orderId, transportMode: "air", lines: [], dates: {} };
     const result = mode === "direct"
       ? await directBackend.createShipment(data)
       : (await httpsCallable<unknown, { shipmentId: string }>(functions, "createShipment")(data)).data;
     const shipment = (await getDoc(doc(state.db!, "shipments", result.shipmentId))).data()!;
-    expect(shipment.trackingNumber).toMatch(/^SHX\d+$/);
+    expect(shipment.trackingNumber).toMatch(/^SHE-PKG-\d{6,}$/);
     expect(shipment.clientUid).toBe(CLIENT_UID);
     const before = await counts();
     await expect(directBackend.createOrder(payload(shipment.trackingNumber))).rejects.toThrow(/déjà utilisé/);
@@ -238,13 +239,14 @@ for (const mode of ["direct", "callable"] as const) {
 
 it("une commande et un colis créés simultanément ne peuvent pas partager le même suivi", async () => {
   const createShipment = httpsCallable(functions, "createShipment");
+  const parent=await directBackend.createOrder(payload(null));
   const results = await Promise.allSettled([
     directBackend.createOrder(payload("CROSS-PATH-TRACKING")),
-    createShipment({ clientId: CLIENT_ID, trackingNumber: "CROSS-PATH-TRACKING", dates: {}, lines: [] }),
+    createShipment({ clientId: CLIENT_ID, orderRef:parent.orderId, trackingNumber: "CROSS-PATH-TRACKING", dates: {}, lines: [] }),
   ]);
   expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
   expect(results.filter(r => r.status === "rejected")).toHaveLength(1);
-  expect((await getDocs(query(collection(state.db!, "shipments"), where("trackingNumber", "==", "CROSS-PATH-TRACKING")))).size).toBe(1);
+  expect((await getDocs(query(collection(state.db!, "shipments"), where("externalTrackingNumber", "==", "CROSS-PATH-TRACKING")))).size).toBe(1);
 });
 
 it("préserve aussi les documents financiers préexistants quand un compteur est absent", async () => {
@@ -254,4 +256,60 @@ it("préserve aussi les documents financiers préexistants quand un compteur est
   await expect(directBackend.createOrder(payload())).rejects.toThrow(/identifiant est déjà utilisé/);
   expect((await getDoc(doc(state.db!, "orderFinance", id))).data()?.totalPaid).toBe(12345);
   expect(await counts()).toEqual(before);
+});
+
+for (const mode of ['direct','callable'] as const) {
+  const add=(data:unknown)=>mode==='direct'?directBackend.addOrderPackage(data):httpsCallable<unknown,{shipmentId:string}>(functions,'addOrderPackage')(data).then(r=>r.data);
+  it(`multi-colis ${mode} : compteur global, tracking séparé et statuts indépendants`,async()=>{
+    const a=await directBackend.createOrder({...payload(null),createInitialPackage:true});
+    const b=await directBackend.createOrder({...payload(null),createInitialPackage:true});
+    const extra=await add({orderId:a.orderId,externalTrackingNumber:'AMAZON-MULTI'});
+    expect(extra.shipmentId).toBe('SHE-PKG-000003');
+    const order=(await getDoc(doc(state.db!,'orders',a.orderId))).data()!;
+    expect(order.shipmentIds).toHaveLength(2);
+    expect(order.stats.shipmentCount).toBe(2);
+    expect((await getDoc(doc(state.db!,'orders',b.orderId))).data()!.shipmentIds).toEqual(['SHE-PKG-000002']);
+    await directBackend.recordShipmentWeighing({shipmentId:extra.shipmentId,weightLb:1.5,confirmMiamiReceipt:true,confirmRate:true,miamiReceivedAt:'2026-11-10'});
+    await directBackend.updateStatus({targetType:'shipment',targetId:extra.shipmentId,status:'in_transit'});
+    expect((await getDoc(doc(state.db!,'shipments',extra.shipmentId))).data()).toMatchObject({trackingNumber:extra.shipmentId,externalTrackingNumber:'AMAZON-MULTI',status:'in_transit',shippingFeeCents:900,miamiReceivedAt:'2026-11-10',dates:{warehouseReceivedAt:'2026-11-10'}});
+    expect((await getDoc(doc(state.db!,'shipments',order.shipmentIds[0]))).data()!.status).toBe('registered');
+    expect((await getDoc(doc(state.db!,'orders',a.orderId))).data()!.status).toBe('registered');
+    await directBackend.updatePackageTracking({shipmentId:extra.shipmentId,externalTrackingNumber:'TEMU-NEW'});
+    expect((await getDoc(doc(state.db!,'shipments',extra.shipmentId))).data()).toMatchObject({shipmentId:extra.shipmentId,trackingNumber:extra.shipmentId,externalTrackingNumber:'TEMU-NEW'});
+    const client=env.authenticatedContext(CLIENT_UID,{role:'client'}).firestore();
+    expect((await getDoc(doc(client,'shipments',extra.shipmentId))).exists()).toBe(true);
+    await assertFails(updateDoc(doc(state.db!,'shipments',extra.shipmentId),{trackingNumber:'FAKE-ID'}));
+    await assertFails(updateDoc(doc(client,'shipments',extra.shipmentId),{externalTrackingNumber:'FAKE'}));
+    await directBackend.updateOrder({...payload(null),orderId:a.orderId,initialStatus:'available'});
+    expect((await getDoc(doc(state.db!,'shipments',extra.shipmentId))).data()!.trackingNumber).toBe(extra.shipmentId);
+    expect((await getDoc(doc(state.db!,'orders',a.orderId))).data()!.status).toBe('registered');
+    await deleteDoc(doc(state.db!,'shipments',extra.shipmentId));
+    const next=await add({orderId:a.orderId});
+    expect(next.shipmentId).toBe('SHE-PKG-000004');
+    await assertFails(deleteDoc(doc(state.db!,'packageNumbers',extra.shipmentId)));
+    await assertFails(deleteDoc(doc(state.db!,'counters','packages')));
+    await assertFails(updateDoc(doc(state.db!,'counters','packages'),{value:1}));
+  });
+}
+it('plusieurs administrateurs et chemins partagent le même compteur sans doublon',async()=>{
+  const {orderId}=await directBackend.createOrder(payload(null));
+  const call=httpsCallable<unknown,{shipmentId:string}>(functions,'addOrderPackage');
+  for(let wave=0;wave<3;wave++){
+    const settled=await Promise.allSettled(Array.from({length:6},(_,i)=>i%2?call({orderId}).then(r=>r.data):directBackend.addOrderPackage({orderId})));
+    expect(settled.filter(r=>r.status==='rejected').map(r=>(r as PromiseRejectedResult).reason?.message)).toEqual([]);
+    const results=settled.map(r=>(r as PromiseFulfilledResult<{shipmentId:string}>).value);
+    expect(new Set(results.map(r=>r.shipmentId)).size).toBe(6);
+    expect(results.map(r=>r.shipmentId).sort()).toEqual(Array.from({length:6},(_,i)=>formatPackageId(wave*6+i+1)));
+  }
+  expect((await getDoc(doc(state.db!,'orders',orderId))).data()!.shipmentIds).toHaveLength(18);
+});
+it('un ancien colis et ses données ne sont pas renumérotés',async()=>{
+  const legacy='SHE-COLIS-2024-00321';
+  const parent=await directBackend.createOrder(payload(null));
+  const data={shipmentId:legacy,trackingNumber:'LEGACY-TRACK',clientId:CLIENT_ID,clientUid:CLIENT_UID,orderIds:[parent.orderId],lines:[],status:'available',marker:'historique'};
+  await setDoc(doc(state.db!,'shipments',legacy),data);
+  await updateDoc(doc(state.db!,'orders',parent.orderId),{shipmentIds:[legacy]});
+  const created=await directBackend.addOrderPackage({orderId:parent.orderId});
+  expect(created.shipmentId).toBe('SHE-PKG-000001');
+  expect((await getDoc(doc(state.db!,'shipments',legacy))).data()).toEqual(data);
 });

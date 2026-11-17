@@ -4,8 +4,9 @@ import {
   updateShipmentSchema,
   recordShipmentWeighingSchema,
   updateShippingPaymentSchema,
-  formatShipmentId,
-  defaultTrackingNumber,
+  formatPackageId,
+  externalTracking,
+  orderPackageStatus,
   validateAllocation,
   validateDateOrder,
   diffDates,
@@ -75,7 +76,8 @@ async function reserveTracking(tx: Transaction, tn: string, shipmentId: string) 
   const reservation = await tx.get(trackingRef(tn));
   if (reservation.exists && reservation.data()?.shipmentId !== shipmentId) fail("already-exists", `Le numéro de suivi ${tn} est déjà utilisé.`);
   const matches = await tx.get(db().collection("shipments").where("trackingNumber", "==", tn));
-  if (matches.docs.some(snap => snap.id !== shipmentId)) fail("already-exists", `Le numéro de suivi ${tn} est déjà utilisé.`);
+  const externalMatches = await tx.get(db().collection("shipments").where("externalTrackingNumber", "==", tn));
+  if ([...matches.docs, ...externalMatches.docs].some(snap => snap.id !== shipmentId)) fail("already-exists", `Le numéro de suivi ${tn} est déjà utilisé.`);
 }
 
 /** Création d'un colis pour un client, avec répartition optionnelle d'articles reçus. */
@@ -90,21 +92,29 @@ export const createShipment = onCall(callableOptions(), async (req) => {
     if (!clientSnap.exists) fail("not-found", "Client introuvable.");
     const client = clientSnap.data() as ClientDoc;
     if (client.status !== "active") fail("failed-precondition", "Le compte de ce client est désactivé.");
-    const orderIds = [...new Set(input.lines.map((l) => l.orderId))];
+    const orderIds = [...new Set([...(input.orderRef ? [input.orderRef] : []), ...input.lines.map((l) => l.orderId)])];
+    if (!orderIds.length) fail("invalid-argument", "Choisissez la commande principale de ce colis.");
     const { orders, shipments } = await loadOrdersWithShipments(tx, orderIds);
     if (input.trackingNumber) await reserveTracking(tx, input.trackingNumber, "__new__");
     const lines = buildLines(input.lines, orders, [...shipments.values()], client.clientUid);
     const counter = await readCreationCounter(tx, "shipments", year);
     const seq = counter.next;
-    const id = formatShipmentId(year, seq);
+    const id = formatPackageId(seq);
     const existing = await tx.getAll(db().doc(`shipments/${id}`), db().doc(`shipmentPrivate/${id}`));
     if (existing.some(snap => snap.exists)) fail("already-exists", "Cet identifiant de colis est déjà utilisé. Aucune donnée n'a été remplacée.");
-    const trackingNumber = input.trackingNumber ?? defaultTrackingNumber(year, seq);
-    if (!input.trackingNumber) await reserveTracking(tx, trackingNumber, id);
-    const status = lines.length > 0 ? "preparing" : "awaiting_receipt";
+    const trackingNumber = id;
+    const primaryOrder = orders.get(orderIds[0])!;
+    if (primaryOrder.clientUid !== client.clientUid || primaryOrder.status === "cancelled") fail("invalid-argument", "La commande principale n'appartient pas à ce client ou est annulée.");
+    const status = input.initialStatus ?? (input.dates.warehouseReceivedAt ? "received" : lines.length > 0 ? "preparing" : "registered");
     const data: ShipmentData = {
       shipmentId: id,
       trackingNumber,
+      externalTrackingNumber: input.trackingNumber,
+      description: input.description,
+      packageSequence: seq,
+      primaryOrderId: orderIds[0],
+      rateConfirmedAt: null,
+      miamiReceivedAt: status === "received" ? input.dates.warehouseReceivedAt ?? new Date().toISOString() : null,
       clientId: client.clientId,
       clientUid: client.clientUid,
       orderIds,
@@ -123,7 +133,7 @@ export const createShipment = onCall(callableOptions(), async (req) => {
     const now = FieldValue.serverTimestamp();
     writeCreationCounter(tx, counter);
     tx.create(db().doc(`shipments/${id}`), { ...data, searchTokens: [trackingNumber.toLowerCase(), id.toLowerCase()], createdAt: now, updatedAt: now });
-    tx.set(trackingRef(trackingNumber), { shipmentId: id, createdAt: now });
+    if (input.trackingNumber) tx.set(trackingRef(input.trackingNumber), { shipmentId: id, createdAt: now });
     tx.set(db().doc(`shipmentPrivate/${id}`), { shipmentId: id, internalNotes: input.internalNotes ?? "", updatedAt: now, updatedBy: actor.uid });
     shipments.set(id, data);
     for (const o of orders.values()) {
@@ -160,7 +170,9 @@ export const updateShipment = onCall(callableOptions(), async (req) => {
     if (current.status === "cancelled") fail("failed-precondition", "Un colis annulé ne peut plus être modifié.");
     const newOrderIds = [...new Set(input.lines.map((l) => l.orderId))];
     const { orders, shipments } = await loadOrdersWithShipments(tx, [...new Set([...current.orderIds, ...newOrderIds])]);
-    const trackingNumber = input.trackingNumber ?? current.trackingNumber;
+    const nextExternal = input.trackingNumber === current.trackingNumber ? externalTracking(current) : input.trackingNumber ?? externalTracking(current);
+    if (nextExternal) await reserveTracking(tx, nextExternal, current.shipmentId);
+    const trackingNumber = current.packageSequence ? current.trackingNumber : input.trackingNumber ?? current.trackingNumber;
     if (trackingNumber !== current.trackingNumber) await reserveTracking(tx, trackingNumber, current.shipmentId);
 
     const linesChanged = JSON.stringify(input.lines.map((l) => [l.orderId, l.lineId, l.quantity]).sort()) !==
@@ -176,7 +188,9 @@ export const updateShipment = onCall(callableOptions(), async (req) => {
     const next: ShipmentData = {
       ...current,
       trackingNumber,
-      orderIds: [...new Set(lines.map((l) => l.orderId))],
+      externalTrackingNumber: nextExternal,
+      description: input.description,
+      orderIds: [...new Set([...(current.primaryOrderId ? [current.primaryOrderId] : []), ...lines.map((l) => l.orderId)])],
       lines,
       itemCount: lines.reduce((s, l) => s + l.quantity, 0),
       weightKg: input.weightKg,
@@ -268,21 +282,22 @@ export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
       if (order.clientUid !== current.clientUid) fail("failed-precondition", "Le colis et la commande n'appartiennent pas au même client.");
     }
     const nowIso = new Date().toISOString();
-    let miamiReceivedAt = current.miamiReceivedAt ?? null;
+    let miamiReceivedAt = input.miamiReceivedAt ?? current.miamiReceivedAt ?? null;
     let nextStatus = current.status;
     const dates = { ...(current.dates ?? {}) };
 
-    if (!hasConfirmedMiamiReception({ status: current.status, miamiReceivedAt })) {
+    if (!hasConfirmedMiamiReception(current)) {
       if (!input.confirmMiamiReceipt) {
         fail("failed-precondition", "La réception physique à Miami doit être confirmée avant la pesée.");
       }
-      miamiReceivedAt = nowIso;
+      miamiReceivedAt = input.miamiReceivedAt ?? nowIso;
       nextStatus = "received";
       if (!dates.warehouseReceivedAt) dates.warehouseReceivedAt = todayIso();
     } else if (!miamiReceivedAt) {
       miamiReceivedAt = nowIso;
     }
 
+    if(input.miamiReceivedAt) dates.warehouseReceivedAt=input.miamiReceivedAt;
     const pricing = await tx.get(db().doc("settings/public"));
     const ratePerLbCents = current.ratePerLbCents ?? pricing.data()?.shippingRatePerLbCents ?? COMMERCIAL_RATE_CENTS_PER_LB;
     const shippingFeeCents = calculateShippingFeeCents(input.weightLb, ratePerLbCents);
@@ -323,6 +338,7 @@ export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
       miamiReceivedAt,
       actualWeightLb: input.weightLb,
       ratePerLbCents,
+      rateConfirmedAt: input.confirmRate ? nowIso : null,
       shippingFeeCents,
       shippingCurrency: "USD",
       shippingPaymentStatus,
@@ -339,7 +355,7 @@ export const recordShipmentWeighing = onCall(callableOptions(), async (req) => {
         current.lines.filter(line => line.orderId === order.orderId && line.lineId === item.lineId).reduce((sum, line) => sum + line.quantity, 0)) }));
       tx.update(db().doc(`orders/${order.orderId}`), {
         items, stats: computeOrderStats(order.orderId, items, [...shipments.values()]),
-        ...(order.shipmentIds.length === 1 && order.status !== "cancelled" ? { status: nextStatus } : {}), updatedAt: now,
+        ...(order.status !== "cancelled" ? {status:orderPackageStatus([...shipments.values()].filter(s=>s.orderIds.includes(order.orderId)),order.shipmentIds.length===1?nextStatus:order.status)} : {}), updatedAt: now,
       });
     }
 

@@ -162,6 +162,7 @@ export const api = {
   createOrder: call<
     {
       clientId: string;
+      createInitialPackage?: boolean;
       trackingNumber?: string | null;
       initialStatus?: StatusCode | null;
       description?: string | null;
@@ -182,6 +183,9 @@ export const api = {
     },
     { orderId: string }
   >("createOrder", (p) => directBackend.createOrder(p)),
+
+  addOrderPackage: call<{orderId:string;externalTrackingNumber?:string|null},{shipmentId:string}>("addOrderPackage",p=>directBackend.addOrderPackage(p)),
+  updatePackageTracking: call<{shipmentId:string;externalTrackingNumber?:string|null},{ok:boolean}>("updatePackageTracking",p=>directBackend.updatePackageTracking(p)),
 
   updateOrder: call<
     {
@@ -269,10 +273,12 @@ export const api = {
       shipmentId: string;
       actualWeightLb: number;
       confirmMiamiReception?: boolean;
+      confirmRate?: boolean;
+      miamiReceivedAt?: string;
       reason?: string | null;
       publicNote?: string | null;
     }) => call<
-    { shipmentId: string; weightLb: number; confirmMiamiReceipt?: boolean; reason?: string | null; publicNote?: string | null },
+    { shipmentId: string; weightLb: number; confirmMiamiReceipt?: boolean; confirmRate?:boolean; miamiReceivedAt?:string; reason?: string | null; publicNote?: string | null },
     {
       actualWeightLb: number;
       ratePerLbCents: number;
@@ -281,7 +287,7 @@ export const api = {
     }
   >("recordShipmentWeighing", (p) => directBackend.recordShipmentWeighing(p))({
     shipmentId: payload.shipmentId, weightLb: payload.actualWeightLb,
-    confirmMiamiReceipt: payload.confirmMiamiReception, reason: payload.reason, publicNote: payload.publicNote,
+    confirmMiamiReceipt: payload.confirmMiamiReception, confirmRate: payload.confirmRate ?? true, ...(payload.miamiReceivedAt ? {miamiReceivedAt:payload.miamiReceivedAt}:{}), reason: payload.reason, publicNote: payload.publicNote,
   }),
 
   updateShippingPayment: call<

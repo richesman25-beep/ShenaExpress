@@ -120,6 +120,7 @@ export const orderItemInputSchema = z.object({
 });
 
 export const orderBaseSchema = z.object({
+  createInitialPackage: z.boolean().optional().default(false),
   trackingNumber: z
     .string()
     .trim()
@@ -231,6 +232,8 @@ export const recordShipmentWeighingSchema = z.object({
     }),
   confirmMiamiReceipt: z.boolean().optional().default(false),
   reason: optionalText(300),
+  miamiReceivedAt: isoDate.optional(),
+  confirmRate: z.boolean().optional().default(true),
 });
 
 export const shippingPaymentStatusSchema = z.enum([
@@ -320,3 +323,13 @@ export const setStaffRoleSchema = z.object({
 export function zodMessages(error: z.ZodError): string[] {
   return error.issues.map((i) => (i.path.length ? `${i.path.join(".")} : ${i.message}` : i.message));
 }
+
+/** Ajout d’un colis physique sans dupliquer les quantités d’articles de la commande. */
+export const addOrderPackageSchema = z.object({
+  orderId: orderIdSchema,
+  externalTrackingNumber: shipmentBaseSchema.shape.trackingNumber,
+});
+export const packageTrackingSchema = z.object({
+  shipmentId: shipmentIdSchema,
+  externalTrackingNumber: shipmentBaseSchema.shape.trackingNumber,
+});

@@ -1,3 +1,5 @@
+import { externalTracking } from "@shared/index";
+import { ShipmentIdentity } from "@/components/ui";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { collection, doc, getDoc, getDocs } from "firebase/firestore";
 import {
@@ -90,7 +92,7 @@ export function AdminShipmentsPage() {
       if (!q) return true;
       const clientName = clientById.get(s.clientId)?.fullName.toLowerCase() ?? "";
       return (
-        s.trackingNumber.toLowerCase().includes(q) ||
+        `${s.shipmentId} ${externalTracking(s)??''}`.toLowerCase().includes(q) ||
         s.shipmentId.toLowerCase().includes(q) ||
         s.clientId.toLowerCase().includes(q) ||
         clientName.includes(q) ||
@@ -182,7 +184,7 @@ export function AdminShipmentsPage() {
                   return (
                     <tr key={s.shipmentId} className="hover:bg-slate-50/80">
                       <td className="py-3 px-4">
-                        <div className="font-extrabold text-navy-900 font-mono">{s.trackingNumber}</div>
+                        <ShipmentIdentity shipment={s}/>
                         <div className="text-xs text-slate-500">{s.shipmentId}</div>
                       </td>
                       <td className="py-3 px-4 text-xs">
@@ -293,11 +295,12 @@ function ShipmentFormModal({
   const [clientId, setClientId] = useState(
     initial?.clientId ?? clients.find((c) => c.status === "active")?.clientId ?? "",
   );
-  const [trackingNumber, setTrackingNumber] = useState(initial?.trackingNumber ?? "");
+  const {orders}=useAdminData();
+  const [trackingNumber, setTrackingNumber] = useState(initial ? externalTracking(initial) ?? "" : "");
   const [orderRef, setOrderRef] = useState(initial?.orderIds[0] ?? "");
-  const [description, setDescription] = useState(initial?.lines[0]?.description ?? "");
+  const [description, setDescription] = useState(initial?.description ?? initial?.lines[0]?.description ?? "");
   const [initialStatus, setInitialStatus] = useState<StatusCode>(
-    initial && SHENA_PRIMARY_STATUSES.includes(initial.status) ? initial.status : "received",
+    initial && SHENA_PRIMARY_STATUSES.includes(initial.status) ? initial.status : "registered",
   );
   const [internalNotes, setInternalNotes] = useState("");
   const [busy, setBusy] = useState(false);
@@ -316,16 +319,12 @@ function ShipmentFormModal({
     e.preventDefault();
     setError(null);
     const cleanTracking = trackingNumber.trim().toUpperCase();
-    if (!cleanTracking) {
-      setError("Le numéro de suivi unique est obligatoire.");
-      return;
-    }
     setBusy(true);
     try {
       if (initial) {
         await api.updateShipment({
           shipmentId: initial.shipmentId,
-          trackingNumber: cleanTracking,
+          trackingNumber: cleanTracking || null,
           initialStatus,
           orderRef: orderRef.trim() || null,
           description: description.trim() || `Colis ${cleanTracking}`,
@@ -342,7 +341,7 @@ function ShipmentFormModal({
       } else {
         const res = await api.createShipment({
           clientId,
-          trackingNumber: cleanTracking,
+          trackingNumber: cleanTracking || null,
           initialStatus,
           orderRef: orderRef.trim() || null,
           description: description.trim() || `Colis ${cleanTracking}`,
@@ -410,12 +409,11 @@ function ShipmentFormModal({
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="sf-tn" className="block text-xs font-bold text-slate-700 mb-1">
-              Numéro de suivi unique *
+              Tracking externe (facultatif)
             </label>
             <input
               id="sf-tn"
-              required
-              placeholder="Ex. SHX26000001"
+              placeholder="Numéro SHEIN, Amazon ou transporteur"
               value={trackingNumber}
               onChange={(e) => setTrackingNumber(e.target.value)}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase font-mono"
@@ -423,15 +421,9 @@ function ShipmentFormModal({
           </div>
           <div>
             <label htmlFor="sf-oref" className="block text-xs font-bold text-slate-700 mb-1">
-              Référence de la commande (facultative)
+              Commande principale
             </label>
-            <input
-              id="sf-oref"
-              placeholder="Ex. SHE-CMD-2026-00001 ou AMZ-114"
-              value={orderRef}
-              onChange={(e) => setOrderRef(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            />
+            <select id="sf-oref" required disabled={!!initial} value={orderRef} onChange={e=>setOrderRef(e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="">Choisir la commande…</option>{orders.filter(o=>o.clientId===clientId && o.status!=='cancelled').map(o=><option key={o.orderId} value={o.orderId}>{o.orderId}</option>)}</select>
           </div>
         </div>
 

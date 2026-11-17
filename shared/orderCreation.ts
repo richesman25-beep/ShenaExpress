@@ -39,7 +39,7 @@ export function buildOrderCreation(
   }));
 
   let shipment: NewShipment | null = null;
-  if (input.trackingNumber && shipmentId) {
+  if (shipmentId) {
     const lines: ShipmentLine[] = items.map((it) => ({
       orderId,
       lineId: it.lineId,
@@ -48,7 +48,10 @@ export function buildOrderCreation(
     }));
     shipment = {
       shipmentId,
-      trackingNumber: input.trackingNumber,
+      trackingNumber: shipmentId,
+      externalTrackingNumber: input.trackingNumber,
+      primaryOrderId: orderId,
+      ...(shipmentId.startsWith("SHE-PKG-") ? {packageSequence: Number(shipmentId.slice(8)), rateConfirmedAt: null} : {}),
       clientId: client.clientId,
       clientUid: client.clientUid,
       orderIds: [orderId],

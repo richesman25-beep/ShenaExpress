@@ -1,5 +1,7 @@
 import type { Transaction } from "firebase-admin/firestore";
 import {
+  orderPackageStatus,
+  externalTracking,
   computeOrderStats,
   buildSearchTokens,
   type OrderDoc,
@@ -40,7 +42,8 @@ export function deriveOrder(order: OrderData, allShipments: Iterable<ShipmentDat
   const active = related.filter((s) => s.status !== "cancelled");
   return {
     stats,
+    status: orderPackageStatus(related,order.status),
     shipmentIds: related.map((s) => s.shipmentId).sort(),
-    searchTokens: orderSearchTokens(order, active.map((s) => s.trackingNumber)),
+    searchTokens: orderSearchTokens(order, active.flatMap((s) => [s.shipmentId,s.trackingNumber,externalTracking(s)??''])),
   };
 }

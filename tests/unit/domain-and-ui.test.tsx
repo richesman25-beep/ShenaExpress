@@ -450,7 +450,7 @@ describe("Calcul des frais à 6,00 USD/lb & visibilité", () => {
         />
       </SettingsProvider>,
     );
-    expect(container.firstChild).toBeNull();
+    expect(container).toHaveTextContent('Prix en attente');
 
     rerender(
       <SettingsProvider staticSettings={{}}>

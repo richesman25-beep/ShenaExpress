@@ -1,7 +1,12 @@
 /** Formats d'identifiants. Les numéros sont attribués côté serveur via un compteur transactionnel (ou saisis de façon unique) et ne sont jamais réutilisés. */
 export const CLIENT_ID_RE = /^(?:SHE-CLIENT-\d{1,}|SHENA-\d{1,}|SHE-[A-Z0-9]{1,}(?:-[A-Z0-9]{1,20})*)$/;
 export const ORDER_ID_RE = /^SHE-CMD-\d{4}-\d{5,}$/;
-export const SHIPMENT_ID_RE = /^SHE-COLIS-\d{4}-\d{5,}$/;
+export const PACKAGE_ID_RE = /^SHE-PKG-\d{6,}$/;
+export const SHIPMENT_ID_RE = /^(?:SHE-COLIS-\d{4}-\d{5,}|SHE-PKG-\d{6,})$/;
+export function formatPackageId(n: number): string {
+  if (!Number.isSafeInteger(n) || n < 1) throw new Error("Numéro de colis invalide.");
+  return `SHE-PKG-${String(n).padStart(6, "0")}`;
+}
 
 export function formatClientId(n: number): string {
   return `SHE-CLIENT-${String(n).padStart(3, "0")}`;

@@ -169,11 +169,39 @@ service cloud.firestore {
       allow update, delete: if canAccess('finance.write') && !resource.data.get('accountingManaged', false);
     }
 
+    // Les numéros globaux sont réservés atomiquement et ne peuvent jamais être supprimés.
+    function allocatedPackage(id) {
+      let reservation = getAfter(/databases/$(database)/documents/packageNumbers/$(id)).data;
+      let parent = getAfter(/databases/$(database)/documents/orders/$(request.resource.data.primaryOrderId)).data;
+      return request.resource.data.shipmentId == id && request.resource.data.trackingNumber == id
+        && request.resource.data.packageSequence == reservation.sequence
+        && reservation.packageId == id
+        && getAfter(/databases/$(database)/documents/counters/packages).data.value == reservation.sequence
+        && request.resource.data.primaryOrderId in request.resource.data.orderIds
+        && request.resource.data.clientUid == parent.clientUid
+        && request.resource.data.clientId == parent.clientId;
+    }
+    match /packageNumbers/{id} {
+      allow read: if canAccess('orders.read') || canAccess('shipments.read') || canWriteOperations();
+      allow create: if (canAccess('orders.write') || canAccess('shipments.write'))
+        && request.resource.data.packageId == id
+        && request.resource.data.sequence is int && request.resource.data.sequence > 0
+        && id.matches('^SHE-PKG-[0-9]{6,}$')
+        && int(id.split('-')[2]) == request.resource.data.sequence
+        && (request.resource.data.sequence < 1000000 ? id.matches('^SHE-PKG-[0-9]{6}$') : id == 'SHE-PKG-' + string(request.resource.data.sequence))
+        && getAfter(/databases/$(database)/documents/counters/packages).data.value == request.resource.data.sequence
+        && getAfter(/databases/$(database)/documents/shipments/$(id)).data.packageSequence == request.resource.data.sequence;
+      allow update, delete: if false;
+    }
+
     // Colis / expéditions (shipments/{shipmentId})
     match /shipments/{shipmentId} {
       allow read: if canAccess('shipments.read') || isOwnClientResource();
-      allow create: if canAccess('shipments.write') && !request.resource.data.get('accountingManaged', false);
-      allow update: if canAccess('shipments.write') && (!resource.data.get('accountingManaged', false) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountingManaged','paidAmountCents','shippingPaymentStatus','actualWeightLb','shippingFeeCents','ratePerLbCents','clientUid','clientId','orderIds','lines']));
+      allow create: if canAccess('shipments.write') && !request.resource.data.get('accountingManaged', false)
+        && (!shipmentId.matches('^SHE-PKG-[0-9]{6,}$') || allocatedPackage(shipmentId));
+      allow update: if canAccess('shipments.write')
+        && (!shipmentId.matches('^SHE-PKG-[0-9]{6,}$') || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['shipmentId','trackingNumber','packageSequence','primaryOrderId','clientUid','clientId','orderIds','lines']))
+        && (!resource.data.get('accountingManaged', false) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountingManaged','paidAmountCents','shippingPaymentStatus','actualWeightLb','shippingFeeCents','ratePerLbCents','rateConfirmedAt','miamiReceivedAt','clientUid','clientId','orderIds','lines']));
       allow delete: if canAccess('shipments.write') && !resource.data.get('accountingManaged', false);
     }
 
@@ -239,7 +267,10 @@ service cloud.firestore {
 
     // Compteurs de séquences d'identifiants (counters/{counterId})
     match /counters/{counterId} {
-      allow read, write: if canWriteOperations();
+      allow read: if canWriteOperations();
+      allow create: if canWriteOperations() && (counterId != 'packages' || request.resource.data.value == 1);
+      allow update: if canWriteOperations() && (counterId != 'packages' || request.resource.data.value == resource.data.value + 1);
+      allow delete: if canWriteOperations() && counterId != 'packages';
     }
 
     // File d'envoi d'e-mails (mail/{mailId})

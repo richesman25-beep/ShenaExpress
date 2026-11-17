@@ -150,6 +150,12 @@ export interface ShipmentDates {
 export interface ShipmentDoc {
   shipmentId: string; // ex. SHE-COLIS-2026-00001
   trackingNumber: string;
+  /** Numéro du marchand/transporteur ; indépendant de l’identifiant SHENA. */
+  externalTrackingNumber?: string | null;
+  description?: string | null;
+  packageSequence?: number;
+  primaryOrderId?: string;
+  rateConfirmedAt?: string | null;
   clientId: string;
   clientUid: string;
   orderIds: string[];
@@ -308,6 +314,7 @@ export interface PaymentRecordDoc {
 /* --------------------------------------------------------------- settings */
 /** settings/public — informations d'entreprise lisibles par tous (page de connexion, WhatsApp). */
 export interface PublicSettingsDoc {
+  shippingRatePerLbCents?: number;
   companyName: string;
   logoUrl?: string | null;
   whatsappNumber?: string | null; // format international, chiffres uniquement

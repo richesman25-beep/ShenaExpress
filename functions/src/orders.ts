@@ -7,7 +7,7 @@ import {
   allocatedByLine,
   lineKey,
   buildOrderCreation,
-  formatShipmentId,
+  formatPackageId,
   todayIso,
   type ClientDoc,
   type OrderItem,
@@ -40,9 +40,9 @@ export const createOrder = onCall(callableOptions(), async (req) => {
     if (client.status !== "active") fail("failed-precondition", "Le compte de ce client est désactivé.");
     if (client.clientId !== input.clientId || !client.clientUid) fail("failed-precondition", "L'association du client à son compte est invalide. Contactez l'administrateur.");
     const counter = await readCreationCounter(tx, "orders", year);
-    const shipmentCounter = input.trackingNumber ? await readCreationCounter(tx, "shipments", year) : null;
+    const shipmentCounter = input.trackingNumber || input.createInitialPackage ? await readCreationCounter(tx, "shipments", year) : null;
     const id = formatOrderId(year, counter.next);
-    const shipmentId = shipmentCounter ? formatShipmentId(year, shipmentCounter.next) : null;
+    const shipmentId = shipmentCounter ? formatPackageId(shipmentCounter.next) : null;
     const paths = [`orders/${id}`, `orderPrivate/${id}`, `orderFinance/${id}`,
       ...(shipmentId ? [`shipments/${shipmentId}`, `shipmentPrivate/${shipmentId}`] : [])];
     const existing = await tx.getAll(...paths.map(path => db().doc(path)));
@@ -51,7 +51,8 @@ export const createOrder = onCall(callableOptions(), async (req) => {
       const reservation = await tx.get(db().doc(`trackingNumbers/${input.trackingNumber}`));
       if (reservation.exists) fail("already-exists", "Ce numéro de suivi est déjà utilisé par un autre colis.");
       const duplicates = await tx.get(db().collection("shipments").where("trackingNumber", "==", input.trackingNumber));
-      if (!duplicates.empty) fail("already-exists", "Ce numéro de suivi est déjà utilisé par un autre colis.");
+      const externalDuplicates = await tx.get(db().collection("shipments").where("externalTrackingNumber", "==", input.trackingNumber));
+      if (!duplicates.empty || !externalDuplicates.empty) fail("already-exists", "Ce numéro de suivi est déjà utilisé par un autre colis.");
     }
     const { order, shipment } = buildOrderCreation(input, client, id, shipmentId, new Date().toISOString());
     // Toutes les lectures sont terminées ; les écritures suivantes sont atomiques.
@@ -68,7 +69,7 @@ export const createOrder = onCall(callableOptions(), async (req) => {
     if (shipment && shipmentId) {
       tx.create(db().doc(`shipments/${shipmentId}`), { ...shipment, searchTokens: [shipment.trackingNumber.toLowerCase(), shipmentId.toLowerCase()], createdAt: now, updatedAt: now });
       tx.create(db().doc(`shipmentPrivate/${shipmentId}`), { shipmentId, internalNotes: input.internalNotes ?? "", updatedAt: now, updatedBy: actor.uid });
-      tx.set(db().doc(`trackingNumbers/${shipment.trackingNumber}`), { shipmentId, createdAt: now });
+      if (input.trackingNumber) tx.set(db().doc(`trackingNumbers/${input.trackingNumber}`), { shipmentId, createdAt: now });
       writeEvent(tx, actor, {
         kind: "created", targetType: "shipment", orderId: id, shipmentId,
         clientUid: client.clientUid, toStatus: order.status,

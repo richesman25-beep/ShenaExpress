@@ -1,5 +1,6 @@
 import { onCall } from "firebase-functions/v2/https";
 import {
+  orderPackageStatus,
   updateStatusSchema,
   STATUS_DEFINITIONS,
   statusLabel,
@@ -89,7 +90,7 @@ export const updateStatus = onCall(callableOptions(), async (req) => {
             orderStatus = "in_transit";
           }
         }
-        tx.update(db().doc(`orders/${o.orderId}`), { ...derived, status: orderStatus, updatedAt: now });
+        tx.update(db().doc(`orders/${o.orderId}`), { ...derived, status: orderPackageStatus([...shipments.values()].filter(s=>s.orderIds.includes(o.orderId)),orderStatus), updatedAt: now });
       }
 
       writeEvent(tx, actor, {
