@@ -1,6 +1,6 @@
 # Comptabilité SHENA Express — validation locale
 
-Le module est accessible aux administrateurs autorisés dans `/admin/comptabilite`. Aucune migration, écriture en production, publication, opération Git distante ou reconstruction de l'application n'a été effectuée.
+Le module est accessible aux administrateurs autorisés dans `/admin/comptabilite`. L’intégration initiale a été testée localement. Aucune migration ni suppression de données existantes n’a été effectuée. La publication ciblée des règles Firestore pour débloquer la pesée est décrite ci-dessous.
 
 ## Architecture réutilisée
 
@@ -85,6 +85,16 @@ Les colis regroupant plusieurs commandes et les anciennes commandes libellées H
 Les exports réunissent les indicateurs, factures et opérations de la période, puis les créances et dettes détaillées à la date de fin, y compris celles émises avant la période. Le PDF repose sur l'impression du navigateur. Les abonnements chargent le registre autorisé en entier pour calculer les soldes ; une agrégation serveur et une pagination seront nécessaires pour un volume important.
 
 Le défaut historique des permissions `staff` est corrigé. Les champs absents dans les claims/profils sont lus avec des valeurs par défaut. Les accès sont attribués collection par collection suivant les permissions `clients.*`, `orders.*`, `shipments.*`, `finance.*`, `audit.read` et `settings.write`, sans ajouter `staff` au groupe historique des utilisateurs disposant de tous les droits. Lorsque le profil utilisateur existe, sa permission doit aussi être active : un ancien token ne suffit pas après révocation ou désactivation. Les accès historiques `admin`, `operator` et `finance_manager` sont conservés. Les employés ne peuvent pas modifier les rôles ni les tarifs comptables réservés à l'administrateur. Le contexte administrateur ne demande plus les paramètres privés sans autorisation. La sauvegarde directe des paramètres fusionne atomiquement `settings/public` et `settings/private`, afin de conserver le tarif déjà enregistré. Aucun profil existant n'a été modifié. Pour vérifier toute la suite Firebase : `npm run test:emulators`.
+
+## Correction du refus de pesée — publication Firebase
+
+La comparaison avec les règles réellement publiées sur `shenaexpress-13924` a confirmé l’absence de la collection `notifications`. Le backend direct enregistre une notification dans la même transaction que le poids et le prix : cette écriture refusée annulait toute la pesée. Un push GitHub ou un déploiement Netlify ne publie pas les règles Firebase.
+
+Les règles corrigées ont été publiées avec `firebase deploy --project shenaexpress-13924 --only firestore:rules --non-interactive`, puis relues via l’API Firebase pour vérifier leur identité exacte avec le fichier testé. Aucune donnée client/commande réelle n’a été écrite pour cette vérification et aucune Function n’a été déployée.
+
+La version conserve les protections précédemment publiées : gestion des rôles réservée aux administrateurs, activation client limitée au propriétaire, existence du client vérifiée pour les jetons et audit réservé aux administrateurs ou aux employés avec `audit.read`. Des tests de régression couvrent ces protections et la pesée de 1,5 lb à 9 USD, avec notification et lecture par le client. Bilan : 44 tests Firebase, 27 tests unitaires, compilation et ESLint réussis.
+
+Une copie des anciennes règles et les références de publication sont sauvegardées dans `backups/` (ignoré par Git). Les ajustements des règles et les tests sont versionnés dans le dépôt pour conserver la concordance avec la publication Firebase.
 
 ## Fichiers concernés
 

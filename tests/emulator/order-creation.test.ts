@@ -101,6 +101,22 @@ for (const mode of ["direct", "callable"] as const) {
       await assertFails(setDoc(doc(clientDb, "orders", orderId), { status: "delivered" }, { merge: true }));
     });
 
+    it("enregistre la pesée de 1,5 lb et sa notification sans arrondi à la livre", async () => {
+      const { orderId } = await create(payload());
+      const order = (await getDoc(doc(state.db!, "orders", orderId))).data()!;
+      const shipmentId = order.shipmentIds[0];
+      const weighing = { shipmentId, weightLb: 1.5, confirmMiamiReceipt: true };
+      if (mode === "direct") await directBackend.recordShipmentWeighing(weighing);
+      else await httpsCallable(functions, "recordShipmentWeighing")(weighing);
+      expect((await getDoc(doc(state.db!, "shipments", shipmentId))).data()).toMatchObject({
+        actualWeightLb: 1.5, shippingFeeCents: 900, status: "received",
+      });
+      const notifications = await getDocs(query(collection(state.db!, "notifications"), where("shipmentId", "==", shipmentId)));
+      expect(notifications.docs.some(n => n.data().type === "shipment_received")).toBe(true);
+      const clientDb = env.authenticatedContext(CLIENT_UID, { role: "client" }).firestore();
+      expect((await getDoc(doc(clientDb, "shipments", shipmentId))).data()).toMatchObject({actualWeightLb: 1.5, shippingFeeCents: 900});
+    });
+
     it("suit les six étapes et affiche le poids et le prix dès Miami", async () => {
       const { orderId } = await create(payload());
       const order = (await getDoc(doc(state.db!, "orders", orderId))).data()!;

@@ -197,6 +197,20 @@ describe("Permissions Firestore du rôle staff", () => {
     await assertFails(getDoc(doc(db, "orders/perm-order")));
     await assertFails(getDoc(doc(db, "accountingInvoices/perm-invoice")));
   });
+  it("préserve les protections publiées sur les rôles et l’activation client", async () => {
+    for (const role of ["operator", "finance_manager"]) {
+      const db = env.authenticatedContext("perm-escalation-" + role, {role}).firestore();
+      await assertFails(setDoc(doc(db, "users/perm-escalation-" + role), {role: "admin", disabled: false}));
+    }
+    const anonymous = env.unauthenticatedContext().firestore();
+    await assertFails(updateDoc(doc(anonymous, "clients/perm-client"), {passwordConfigured: true}));
+    const owner = env.authenticatedContext("perm-client-owner", {role: "client"}).firestore();
+    await assertSucceeds(updateDoc(doc(owner, "clients/perm-client"), {passwordConfigured: true}));
+    await assertFails(setDoc(doc(anonymous, "clientPasswordTokens/perm-forged-token"), {
+      clientId: "CLIENT-INEXISTANT", clientUid: "unknown", authEmail: "test@example.invalid",
+      oobCode: "test-only", createdAt: null, expiresAt: null, usedAt: null,
+    }));
+  });
   it.each(["admin", "operator", "finance_manager"])(
     "conserve les accès historiques du rôle %s sans claim email",
     async (role) => {
@@ -204,7 +218,8 @@ describe("Permissions Firestore du rôle staff", () => {
         .authenticatedContext("perm-legacy-" + role, { role })
         .firestore();
       await assertSucceeds(getDoc(doc(db, "orders/perm-order")));
-      await assertSucceeds(getDoc(doc(db, "auditLogs/perm-log")));
+      if (role === "admin") await assertSucceeds(getDoc(doc(db, "auditLogs/perm-log")));
+      else await assertFails(getDoc(doc(db, "auditLogs/perm-log")));
     },
   );
 });

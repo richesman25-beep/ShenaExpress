@@ -78,7 +78,6 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isStaff());
       allow create, update: if isAdmin()
-        || isStaff()
         || (
           isDesignatedAdminEmail()
           && request.auth.uid == uid
@@ -97,10 +96,6 @@ service cloud.firestore {
         || (
           isOwnClientResource()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['passwordConfigured', 'updatedAt'])
-          && request.resource.data.passwordConfigured == true
-        )
-        || (
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['passwordConfigured', 'updatedAt'])
           && request.resource.data.passwordConfigured == true
         );
     }
@@ -121,6 +116,7 @@ service cloud.firestore {
           request.resource.data.keys().hasOnly(['clientId', 'clientUid', 'authEmail', 'oobCode', 'createdAt', 'expiresAt', 'usedAt'])
           && request.resource.data.usedAt == null
           && request.resource.data.clientId is string
+          && exists(/databases/$(database)/documents/clientAuth/$(request.resource.data.clientId))
         );
       allow update: if canAccess('clients.write')
         || (
@@ -222,7 +218,7 @@ service cloud.firestore {
 
     // Journal d'audit administratif immuable (auditLogs/{logId})
     match /auditLogs/{logId} {
-      allow read: if canAccess('audit.read');
+      allow read: if isAdmin() || staffPermission('audit.read');
       allow create: if canWriteOperations() || canAccess('finance.write');
       allow update, delete: if false;
     }
